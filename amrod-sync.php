@@ -8,14 +8,19 @@ Author: Mediaplatform
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-// --- Guard: Require WooCommerce ---
-if ( ! class_exists( 'WooCommerce' ) ) {
-    add_action('admin_notices', 'amrod_admin_notice_woocommerce_missing');
-    return;
+// --- Guard: Require WooCommerce (check on plugins_loaded to ensure WooCommerce is initialized) ---
+add_action('plugins_loaded', 'amrod_check_woocommerce_dependency', 10);
+function amrod_check_woocommerce_dependency() {
+    if ( ! class_exists( 'WooCommerce' ) ) {
+        add_action('admin_notices', 'amrod_admin_notice_woocommerce_missing');
+        // Deactivate the plugin if WooCommerce is not active
+        deactivate_plugins( plugin_basename( __FILE__ ) );
+        return;
+    }
 }
 
 function amrod_admin_notice_woocommerce_missing() {
-    echo "<div class='notice notice-error'><p>❌ WooCommerce must be active for Amrod Sync to work.</p></div>";
+    echo "<div class='notice notice-error'><p>❌ WooCommerce must be active for Amrod Sync to work. Plugin has been deactivated.</p></div>";
 }
 
 // --- Register Settings ---
@@ -65,8 +70,14 @@ function amrod_sync_activation_notice() {
     }
 }
 
-// --- Admin Menu ---
-function amrod_sync_menu() {
+// --- Admin Menu (register only if WooCommerce is available) ---
+add_action('admin_menu', 'amrod_register_admin_menus', 10);
+function amrod_register_admin_menus() {
+    if ( ! class_exists( 'WooCommerce' ) ) {
+        return;
+    }
+    
+    // Top-level menu
     add_menu_page(
         'Amrod Sync',                // Page title
         'Amrod Sync',                // Menu title
@@ -76,44 +87,41 @@ function amrod_sync_menu() {
         'dashicons-update',          // Icon
         56                           // Position
     );
-}
-add_action('admin_menu', 'amrod_sync_menu');
-add_action('admin_menu', 'amrod_sync_status_submenu');
-// Also add an entry under Settings (fallback / discoverability)
-add_action('admin_menu', 'amrod_add_options_page');
-function amrod_add_options_page() {
-    add_options_page('Amrod Sync', 'Amrod Sync', 'manage_options', 'amrod-sync', 'amrod_sync_settings_page');
-}
-
-// Also add the settings page under WooCommerce menu (visible to shop managers)
-add_action('admin_menu', 'amrod_add_woocommerce_submenu');
-function amrod_add_woocommerce_submenu() {
-    if (function_exists('WC')) {
-        add_submenu_page('woocommerce', 'Amrod Sync', 'Amrod Sync', 'manage_woocommerce', 'amrod-sync', 'amrod_sync_settings_page');
-    }
-}
-// Admin bar quick link for easy access
-add_action('admin_bar_menu', 'amrod_admin_bar_link', 100);
-function amrod_admin_bar_link($wp_admin_bar) {
-    if (! ( current_user_can('manage_options') || current_user_can('manage_woocommerce') ) ) return;
-    $wp_admin_bar->add_node([
-        'id'    => 'amrod-sync',
-        'title' => 'Amrod Sync',
-        'href'  => admin_url('admin.php?page=amrod-sync'),
-        'meta'  => ['title' => 'Amrod Sync settings']
-    ]);
-}
-
-// --- Admin Status submenu (shows log & job info)
-function amrod_sync_status_submenu() {
+    
+    // Status submenu
     add_submenu_page(
-        'amrod-sync',                // parent slug (settings page)
+        'amrod-sync',                // parent slug
         'Amrod Sync Status',         // page title
         'Status',                    // menu title
         'manage_options',            // capability
         'amrod-sync-status',         // menu slug
         'amrod_sync_status_page'     // callback
     );
+    
+    // Settings submenu (fallback discoverability)
+    add_options_page('Amrod Sync', 'Amrod Sync', 'manage_options', 'amrod-sync', 'amrod_sync_settings_page');
+    
+    // WooCommerce submenu (accessible to shop managers)
+    if (function_exists('WC')) {
+        add_submenu_page('woocommerce', 'Amrod Sync', 'Amrod Sync', 'manage_woocommerce', 'amrod-sync', 'amrod_sync_settings_page');
+    }
+}
+
+// Admin bar link
+add_action('admin_bar_menu', 'amrod_admin_bar_link', 100);
+function amrod_admin_bar_link($wp_admin_bar) {
+    if ( ! class_exists( 'WooCommerce' ) ) {
+        return;
+    }
+    if (! ( current_user_can('manage_options') || current_user_can('manage_woocommerce') ) ) {
+        return;
+    }
+    $wp_admin_bar->add_node([
+        'id'    => 'amrod-sync',
+        'title' => 'Amrod Sync',
+        'href'  => admin_url('admin.php?page=amrod-sync'),
+        'meta'  => ['title' => 'Amrod Sync settings']
+    ]);
 }
 
 function amrod_sync_status_page() {
