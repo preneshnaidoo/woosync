@@ -1,0 +1,27 @@
+name: Build plugin ZIP
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+  release:
+    types: [published]
+
+jobs:
+  build-zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare plugin folder
+        run: |
+          mkdir -p tmp/amrod-sync
+          rsync -a --exclude='tests' --exclude='.git' --exclude='.github' --exclude='release' --exclude='*.zip' ./amrod-sync.php ./README.md ./CHANGELOG.md ./phpunit.xml.dist tmp/amrod-sync/
+      - name: Create ZIP
+        run: |
+          cd tmp && zip -r ../release/amrod-sync-${{ github.sha }}.zip amrod-sync
+          cd .. && ls -lh release && sha256sum release/amrod-sync-${{ github.sha }}.zip
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: amrod-sync-${{ github.sha }}.zip
+          path: release/amrod-sync-${{ github.sha }}.zip
