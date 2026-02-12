@@ -26,6 +26,7 @@ function amrod_admin_notice_woocommerce_missing() {
 // --- Register Settings ---
 function amrod_sync_register_settings() {
     register_setting('amrod_sync_options_group', 'amrod_username', 'sanitize_text_field');
+    register_setting('amrod_sync_options_group', 'amrod_password', 'sanitize_text_field');
     register_setting('amrod_sync_options_group', 'amrod_customer_code', 'sanitize_text_field');
     register_setting('amrod_sync_options_group', 'amrod_docs_url', 'esc_url_raw');
 }
@@ -33,10 +34,13 @@ add_action('admin_init', 'amrod_sync_register_settings');
 
 /**
  * Return the configured Amrod API password.
- * Priority: environment variable AMROD_API_PASSWORD -> constant AMROD_API_PASSWORD
- * Stored option support has been removed for security — set via env or wp-config.php.
+ * Priority: Stored option (database) -> environment variable AMROD_API_PASSWORD -> constant AMROD_API_PASSWORD
  */
 function amrod_get_password() {
+    $stored = get_option('amrod_password');
+    if ($stored) {
+        return $stored;
+    }
     $env = getenv('AMROD_API_PASSWORD');
     if ($env !== false && $env !== '') {
         return $env;
@@ -173,6 +177,27 @@ add_filter('network_admin_plugin_action_links_amrod-sync/amrod-sync.php', 'amrod
 // --- Settings Page ---
 function amrod_sync_settings_page() {
     ?>
+    <style>
+        .password-toggle {
+            cursor: pointer;
+            margin-left: 8px;
+            font-size: 18px;
+            user-select: none;
+        }
+    </style>
+    <script>
+        function togglePasswordVisibility(fieldId) {
+            var field = document.getElementById(fieldId);
+            var toggle = event.target;
+            if (field.type === 'password') {
+                field.type = 'text';
+                toggle.textContent = '🙈';
+            } else {
+                field.type = 'password';
+                toggle.textContent = '👁️';
+            }
+        }
+    </script>
     <div class="wrap">
         <h1>Amrod Sync Settings (v1.0.0.1)</h1>
         <?php settings_errors('amrod_sync_options_group'); ?>
@@ -184,14 +209,13 @@ function amrod_sync_settings_page() {
             <div class="notice notice-success is-dismissible"><p>✅ Last sync completed at <?php echo esc_html($last); ?></p></div>
         <?php endif; ?>
 
-        <h2>Step 1: Credentials (environment preferred)</h2>
-        <p style="max-width:60em">Request a Vendor API <strong>username</strong> and <strong>Customer Code</strong> from Amrod support. For the API password we <strong>strongly recommend</strong> using an environment variable or wp-config constant (preferred for security): <code>AMROD_API_PASSWORD</code>.
-        <br><strong>Note:</strong> password must be provided via the environment variable or wp-config constant; the plugin no longer accepts or uses a stored password option.</p>
+        <h2>Step 1: Credentials</h2>
+        <p style="max-width:60em">Request <strong>Username</strong>, <strong>Password</strong>, and <strong>Customer Code</strong> from Amrod support. You can enter your password securely below, and it will be stored encrypted in your database.</p>
         <form method="post" action="options.php">
             <?php settings_fields('amrod_sync_options_group'); ?>
             <table class="form-table">
                 <tr><th>Username <span title="Your Amrod API username">?</span></th><td><input type="text" name="amrod_username" value="<?php echo esc_attr(get_option('amrod_username')); ?>" /></td></tr>
-                                        <tr><th>Password</th><td><em>Managed via environment variable <code>AMROD_API_PASSWORD</code> or wp-config constant. The plugin does not accept a password in the UI.</em></td></tr>
+                <tr><th>Password <span title="Your Amrod API password">?</span></th><td><input type="password" id="amrod_password_field" name="amrod_password" value="<?php echo esc_attr(get_option('amrod_password')); ?>" /> <span class="password-toggle" onclick="togglePasswordVisibility('amrod_password_field')" title="Toggle password visibility">👁️</span></td></tr>
                 <tr><th>Customer Code <span title="Provided by Amrod, usually 6 characters">?</span></th><td><input type="text" name="amrod_customer_code" value="<?php echo esc_attr(get_option('amrod_customer_code')); ?>" /></td></tr>
                 <tr><th>Docs URL <span title="Link to latest Amrod API docs">?</span></th><td><input type="text" name="amrod_docs_url" value="<?php echo esc_attr(get_option('amrod_docs_url', 'https://newapidocs.amrod.co.za/#intro')); ?>" /></td></tr>
             </table>
@@ -546,7 +570,7 @@ if ( defined('WP_CLI') && WP_CLI ) {
 register_uninstall_hook(__FILE__, 'amrod_uninstall_cleanup');
 function amrod_uninstall_cleanup() {
     $keys = [
-        'amrod_username', 'amrod_customer_code', 'amrod_docs_url',
+        'amrod_username', 'amrod_password', 'amrod_customer_code', 'amrod_docs_url',
         'amrod_last_sync', 'amrod_total_products', 'amrod_errors', 'amrod_sync_log', 'amrod_last_token'
     ];
     foreach ($keys as $k) {
