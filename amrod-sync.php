@@ -10,10 +10,12 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 // --- Guard: Require WooCommerce ---
 if ( ! class_exists( 'WooCommerce' ) ) {
-    add_action('admin_notices', function() {
-        echo "<div class='notice notice-error'><p>❌ WooCommerce must be active for Amrod Sync to work.</p></div>";
-    });
+    add_action('admin_notices', 'amrod_admin_notice_woocommerce_missing');
     return;
+}
+
+function amrod_admin_notice_woocommerce_missing() {
+    echo "<div class='notice notice-error'><p>❌ WooCommerce must be active for Amrod Sync to work.</p></div>";
 }
 
 // --- Register Settings ---
@@ -39,6 +41,15 @@ function amrod_get_password() {
     }
     return '';
 } 
+
+// Activation check: ensure WooCommerce is active
+register_activation_hook(__FILE__, 'amrod_activation_check');
+function amrod_activation_check() {
+    if ( ! class_exists( 'WooCommerce' ) ) {
+        deactivate_plugins( plugin_basename( __FILE__ ) );
+        wp_die('Amrod Sync requires WooCommerce to be active. Plugin has been deactivated.');
+    }
+}
 
 // --- Admin Menu ---
 function amrod_sync_menu() {
@@ -480,7 +491,8 @@ if ( defined('WP_CLI') && WP_CLI ) {
  * Optional uninstall: remove plugin options when plugin is deleted.
  * If you prefer to keep data, remove this hook.
  */
-register_uninstall_hook(__FILE__, function() {
+register_uninstall_hook(__FILE__, 'amrod_uninstall_cleanup');
+function amrod_uninstall_cleanup() {
     $keys = [
         'amrod_username', 'amrod_customer_code', 'amrod_docs_url',
         'amrod_last_sync', 'amrod_total_products', 'amrod_errors', 'amrod_sync_log', 'amrod_last_token'
@@ -488,5 +500,5 @@ register_uninstall_hook(__FILE__, function() {
     foreach ($keys as $k) {
         delete_option($k);
     }
-});
+}
 
