@@ -65,6 +65,21 @@ function amrod_sync_menu() {
 }
 add_action('admin_menu', 'amrod_sync_menu');
 add_action('admin_menu', 'amrod_sync_status_submenu');
+// Also add an entry under Settings (fallback / discoverability)
+add_action('admin_menu', function() {
+    add_options_page('Amrod Sync', 'Amrod Sync', 'manage_options', 'amrod-sync', 'amrod_sync_settings_page');
+});
+// Admin bar quick link for easy access
+add_action('admin_bar_menu', 'amrod_admin_bar_link', 100);
+function amrod_admin_bar_link($wp_admin_bar) {
+    if (! current_user_can('manage_options')) return;
+    $wp_admin_bar->add_node([
+        'id'    => 'amrod-sync',
+        'title' => 'Amrod Sync',
+        'href'  => admin_url('admin.php?page=amrod-sync'),
+        'meta'  => ['title' => 'Amrod Sync settings']
+    ]);
+}
 
 // --- Admin Status submenu (shows log & job info)
 function amrod_sync_status_submenu() {
@@ -117,6 +132,9 @@ function amrod_sync_plugin_action_links($links) {
     return $links;
 }
 add_filter('plugin_action_links_' . plugin_basename(__FILE__), 'amrod_sync_plugin_action_links');
+// Fallback for single-file installs and network plugins
+add_filter('plugin_action_links_amrod-sync.php', 'amrod_sync_plugin_action_links');
+add_filter('network_admin_plugin_action_links_' . plugin_basename(__FILE__), 'amrod_sync_plugin_action_links');
 
 // --- Settings Page ---
 function amrod_sync_settings_page() {
