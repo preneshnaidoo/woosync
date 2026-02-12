@@ -42,12 +42,26 @@ function amrod_get_password() {
     return '';
 } 
 
-// Activation check: ensure WooCommerce is active
+// Activation check: ensure WooCommerce is active + show setup notice
 register_activation_hook(__FILE__, 'amrod_activation_check');
 function amrod_activation_check() {
     if ( ! class_exists( 'WooCommerce' ) ) {
         deactivate_plugins( plugin_basename( __FILE__ ) );
         wp_die('Amrod Sync requires WooCommerce to be active. Plugin has been deactivated.');
+    }
+    // Set transient to show activation notice (displayed once)
+    set_transient('amrod_sync_activation_notice', 1, HOUR_IN_SECONDS);
+}
+
+// Show admin notice on activation
+add_action('admin_notices', 'amrod_sync_activation_notice');
+function amrod_sync_activation_notice() {
+    if (get_transient('amrod_sync_activation_notice')) {
+        delete_transient('amrod_sync_activation_notice');
+        echo '<div class="notice notice-info is-dismissible"><p>';
+        echo '✅ <strong>Amrod Sync activated!</strong> ';
+        echo 'Next: Set your API credentials via <code>AMROD_API_PASSWORD</code> environment variable, then visit <a href="' . esc_url(admin_url('admin.php?page=amrod-sync')) . '"><strong>Amrod Sync settings</strong></a> to configure and test your connection.';
+        echo '</p></div>';
     }
 }
 
@@ -109,11 +123,11 @@ function amrod_sync_status_page() {
 
     $last = get_option('amrod_last_sync');
     $total = (int) get_option('amrod_total_products', 0);
-            $last_token = get_option('amrod_last_token');
+    $last_token = get_option('amrod_last_token');
     echo '<div class="wrap"><h1>Amrod Sync — Status</h1>';
-    echo '<p><strong>Last sync:</strong> ' . esc_html($last) . '</p>';
+    echo '<p><strong>Last sync:</strong> ' . esc_html($last ?: 'Never') . '</p>';
     echo '<p><strong>Total products synced (accumulated):</strong> ' . esc_html($total) . '</p>';
-    echo '<p><strong>Last token (masked):</strong> ' . esc_html($last_token) . '</p>';
+    echo '<p><strong>Last token (masked):</strong> ' . esc_html($last_token ?: 'Not yet fetched') . '</p>';
 
     if (function_exists('as_get_scheduled_actions')) {
         $count = count(as_get_scheduled_actions(['hook' => 'amrod_sync_batch']));
@@ -152,7 +166,7 @@ add_filter('network_admin_plugin_action_links_amrod-sync/amrod-sync.php', 'amrod
 function amrod_sync_settings_page() {
     ?>
     <div class="wrap">
-        <h1>Amrod Sync Settings (v1.1)</h1>
+        <h1>Amrod Sync Settings (v1.0.0.1)</h1>
         <?php settings_errors('amrod_sync_options_group'); ?>
 
         <?php if ($errors = get_option('amrod_errors')): ?>
@@ -211,7 +225,7 @@ function amrod_sync_settings_page() {
         <?php endif; ?>
 
         <h2>Documentation</h2>
-        <p>Plugin Version: 1.1</p>
+        <p>Plugin Version: 1.0.0.1</p>
         <p><a href="<?php echo esc_url(get_option('amrod_docs_url')); ?>" target="_blank">View Latest Amrod Docs</a></p>
     </div>
     <?php
