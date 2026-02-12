@@ -70,10 +70,18 @@ add_action('admin_menu', 'amrod_add_options_page');
 function amrod_add_options_page() {
     add_options_page('Amrod Sync', 'Amrod Sync', 'manage_options', 'amrod-sync', 'amrod_sync_settings_page');
 }
+
+// Also add the settings page under WooCommerce menu (visible to shop managers)
+add_action('admin_menu', 'amrod_add_woocommerce_submenu');
+function amrod_add_woocommerce_submenu() {
+    if (function_exists('WC')) {
+        add_submenu_page('woocommerce', 'Amrod Sync', 'Amrod Sync', 'manage_woocommerce', 'amrod-sync', 'amrod_sync_settings_page');
+    }
+}
 // Admin bar quick link for easy access
 add_action('admin_bar_menu', 'amrod_admin_bar_link', 100);
 function amrod_admin_bar_link($wp_admin_bar) {
-    if (! current_user_can('manage_options')) return;
+    if (! ( current_user_can('manage_options') || current_user_can('manage_woocommerce') ) ) return;
     $wp_admin_bar->add_node([
         'id'    => 'amrod-sync',
         'title' => 'Amrod Sync',
@@ -133,9 +141,12 @@ function amrod_sync_plugin_action_links($links) {
     return $links;
 }
 add_filter('plugin_action_links_' . plugin_basename(__FILE__), 'amrod_sync_plugin_action_links');
-// Fallback for single-file installs and network plugins
+// Additional fallbacks: different plugin-basenames and network admin
 add_filter('plugin_action_links_amrod-sync.php', 'amrod_sync_plugin_action_links');
+add_filter('plugin_action_links_amrod-sync/amrod-sync.php', 'amrod_sync_plugin_action_links');
 add_filter('network_admin_plugin_action_links_' . plugin_basename(__FILE__), 'amrod_sync_plugin_action_links');
+add_filter('network_admin_plugin_action_links_amrod-sync.php', 'amrod_sync_plugin_action_links');
+add_filter('network_admin_plugin_action_links_amrod-sync/amrod-sync.php', 'amrod_sync_plugin_action_links');
 
 // --- Settings Page ---
 function amrod_sync_settings_page() {
