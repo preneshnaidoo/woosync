@@ -87,7 +87,10 @@ function amrod_sync_status_page() {
         echo '<p><strong>Action Scheduler:</strong> not available — plugin will run synchronously when you click <em>Run Sync Now</em>.</p>';
     }
 
-    echo '<h2>Recent log</h2>'},{    if (empty($log)) {
+    echo '<h2>Recent log</h2>';
+    $log = array_reverse((array) get_option('amrod_sync_log', []));
+
+    if (empty($log)) {
         echo '<p><em>No log entries yet.</em></p>';
     } else {
         echo '<pre style="background:#fff;border:1px solid #eee;padding:8px;max-height:400px;overflow:auto;">' . esc_html(implode("\n", array_slice($log, 0, 200))) . '</pre>';
