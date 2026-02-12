@@ -66,9 +66,10 @@ function amrod_sync_menu() {
 add_action('admin_menu', 'amrod_sync_menu');
 add_action('admin_menu', 'amrod_sync_status_submenu');
 // Also add an entry under Settings (fallback / discoverability)
-add_action('admin_menu', function() {
+add_action('admin_menu', 'amrod_add_options_page');
+function amrod_add_options_page() {
     add_options_page('Amrod Sync', 'Amrod Sync', 'manage_options', 'amrod-sync', 'amrod_sync_settings_page');
-});
+}
 // Admin bar quick link for easy access
 add_action('admin_bar_menu', 'amrod_admin_bar_link', 100);
 function amrod_admin_bar_link($wp_admin_bar) {
