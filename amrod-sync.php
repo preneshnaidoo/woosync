@@ -593,7 +593,229 @@ function amrod_sync_log($message) {
     update_option('amrod_sync_log', $log);
 }
 
-// Process a single batch of products and return array with status
+// Helper: Sync Products endpoint with proper product creation
+function amrod_sync_products_handler($offset = 0, $batch_size = 200, $token = '') {
+    $endpoints = amrod_get_endpoints();
+    $products_ep = $endpoints['products'] ?? null;
+    if (!$products_ep || !$products_ep['enabled']) {
+        amrod_sync_log('Products endpoint disabled or not found.');
+        return ['processed' => 0, 'total' => 0];
+    }
+
+    $products_url = amrod_get_api_url() . $products_ep['path'];
+    $products = amrod_get_endpoint($token, $products_url);
+    if ($products === false || ! is_array($products)) {
+        amrod_sync_log('Products endpoint did not return valid data.');
+        return ['processed' => 0, 'total' => count($products ?? [])];
+    }
+
+    $total = count($products);
+    $batch = array_slice($products, $offset, $batch_size);
+    $processed = 0;
+
+    foreach ($batch as $p) {
+        if (! isset($p['ProductCode'])) {
+            amrod_sync_log('⚠️ Skipped product: missing ProductCode');
+            continue;
+        }
+
+        $sku = sanitize_text_field($p['ProductCode']);
+        $existing_id = wc_get_product_id_by_sku($sku);
+
+        // Get or CREATE product
+        if ($existing_id) {
+            $wc_product = wc_get_product($existing_id);
+        } else {
+            // CREATE NEW PRODUCT (FIX: set type requirement)
+            $wc_product = new WC_Product();
+            $wc_product->set_type('simple');  // ✅ CRITICAL: Set product type
+        }
+
+        if (!$wc_product) {
+            amrod_sync_log("❌ Error: Could not create/fetch product for SKU: {$sku}");
+            continue;
+        }
+
+        // Safely map all Amrod fields to WC product
+        $wc_product->set_sku($sku);
+        $wc_product->set_name($p['Description'] ?? 'Product');
+        $wc_product->set_regular_price(isset($p['Price']) && $p['Price'] > 0 ? floatval($p['Price']) : 0);
+        $wc_product->set_description($p['LongDescription'] ?? '');
+        
+        // Set additional fields if available
+        if (isset($p['Colour']) && !empty($p['Colour'])) {
+            $wc_product->set_attributes(['colour' => sanitize_text_field($p['Colour'])]);
+        }
+
+        // Attempt save and validate
+        $save_result = $wc_product->save();
+        if ($save_result === 0) {
+            amrod_sync_log("❌ Failed to save product SKU: {$sku} (save returned 0)");
+            continue;
+        }
+
+        $processed++;
+    }
+
+    return ['processed' => $processed, 'total' => $total];
+}
+
+// Helper: Sync Stock endpoint to update product quantities
+function amrod_sync_stock_handler($token = '') {
+    $endpoints = amrod_get_endpoints();
+    $stock_ep = $endpoints['stock'] ?? null;
+    if (!$stock_ep || !$stock_ep['enabled']) {
+        return ['processed' => 0];
+    }
+
+    $stock_url = amrod_get_api_url() . $stock_ep['path'];
+    $stock_data = amrod_get_endpoint($token, $stock_url);
+    if ($stock_data === false || ! is_array($stock_data)) {
+        amrod_sync_log('Stock endpoint did not return valid data.');
+        return ['processed' => 0];
+    }
+
+    $processed = 0;
+    foreach ($stock_data as $s) {
+        if (! isset($s['ProductCode']) || ! isset($s['AvailableQuantity'])) {
+            continue;
+        }
+
+        $sku = sanitize_text_field($s['ProductCode']);
+        $qty = intval($s['AvailableQuantity']);
+        $product_id = wc_get_product_id_by_sku($sku);
+
+        if ($product_id) {
+            $product = wc_get_product($product_id);
+            if ($product) {
+                $product->set_stock_quantity($qty);
+                $product->save();
+                $processed++;
+            }
+        }
+    }
+
+    amrod_sync_log("Stock sync: updated {$processed} product quantities");
+    return ['processed' => $processed];
+}
+
+// Helper: Sync Prices endpoint to update product prices
+function amrod_sync_prices_handler($token = '') {
+    $endpoints = amrod_get_endpoints();
+    $prices_ep = $endpoints['prices'] ?? null;
+    if (!$prices_ep || !$prices_ep['enabled']) {
+        return ['processed' => 0];
+    }
+
+    $prices_url = amrod_get_api_url() . $prices_ep['path'];
+    $prices_data = amrod_get_endpoint($token, $prices_url);
+    if ($prices_data === false || ! is_array($prices_data)) {
+        amrod_sync_log('Prices endpoint did not return valid data.');
+        return ['processed' => 0];
+    }
+
+    $processed = 0;
+    foreach ($prices_data as $pr) {
+        if (! isset($pr['ProductCode']) || ! isset($pr['Price'])) {
+            continue;
+        }
+
+        $sku = sanitize_text_field($pr['ProductCode']);
+        $price = floatval($pr['Price']);
+        $product_id = wc_get_product_id_by_sku($sku);
+
+        if ($product_id) {
+            $product = wc_get_product($product_id);
+            if ($product) {
+                $product->set_regular_price($price);
+                $product->save();
+                $processed++;
+            }
+        }
+    }
+
+    amrod_sync_log("Prices sync: updated {$processed} product prices");
+    return ['processed' => $processed];
+}
+
+// Helper: Sync Categories endpoint to create WC categories and assign to products
+function amrod_sync_categories_handler($token = '') {
+    $endpoints = amrod_get_endpoints();
+    $categories_ep = $endpoints['categories'] ?? null;
+    if (!$categories_ep || !$categories_ep['enabled']) {
+        return ['processed' => 0];
+    }
+
+    $categories_url = amrod_get_api_url() . $categories_ep['path'];
+    $categories_data = amrod_get_endpoint($token, $categories_url);
+    if ($categories_data === false || ! is_array($categories_data)) {
+        amrod_sync_log('Categories endpoint did not return valid data.');
+        return ['processed' => 0];
+    }
+
+    $processed = 0;
+    $category_map = []; // Map Amrod category ID to WC category ID
+
+    foreach ($categories_data as $cat) {
+        if (! isset($cat['CategoryCode'])) continue;
+
+        $cat_name = sanitize_text_field($cat['Description'] ?? $cat['CategoryCode']);
+        $cat_code = sanitize_text_field($cat['CategoryCode']);
+
+        // Check if category exists by name
+        $existing = get_term_by('name', $cat_name, 'product_cat');
+        $cat_id = $existing ? $existing->term_id : wp_insert_term($cat_name, 'product_cat')['term_id'] ?? 0;
+
+        if ($cat_id) {
+            $category_map[$cat_code] = $cat_id;
+            $processed++;
+        }
+    }
+
+    // Store category map for product assignment
+    update_option('amrod_category_map', $category_map);
+    amrod_sync_log("Categories sync: created/updated {$processed} categories");
+    return ['processed' => $processed];
+}
+
+// Helper: Sync Colours/Swatches endpoint to store as product attributes
+function amrod_sync_colours_handler($token = '') {
+    $endpoints = amrod_get_endpoints();
+    $colours_ep = $endpoints['colour_swatches'] ?? null;
+    if (!$colours_ep || !$colours_ep['enabled']) {
+        return ['processed' => 0];
+    }
+
+    $colours_url = amrod_get_api_url() . $colours_ep['path'];
+    $colours_data = amrod_get_endpoint($token, $colours_url);
+    if ($colours_data === false || ! is_array($colours_data)) {
+        amrod_sync_log('Colours endpoint did not return valid data.');
+        return ['processed' => 0];
+    }
+
+    $processed = 0;
+    foreach ($colours_data as $colour) {
+        if (! isset($colour['ProductCode'])) continue;
+
+        $sku = sanitize_text_field($colour['ProductCode']);
+        $colour_name = sanitize_text_field($colour['ColourDescription'] ?? 'N/A');
+        $product_id = wc_get_product_id_by_sku($sku);
+
+        if ($product_id) {
+            $product = wc_get_product($product_id);
+            if ($product) {
+                $product->set_attributes(['colour' => $colour_name]);
+                $product->save();
+                $processed++;
+            }
+        }
+    }
+
+    amrod_sync_log("Colours sync: updated {$processed} product colours");
+    return ['processed' => $processed];
+}
+
+// Process a single batch of ALL enabled endpoints and return array with status
 function amrod_sync_process_batch($offset = 0, $batch_size = 200) {
     $token = amrod_get_token();
     if (! $token) {
@@ -610,48 +832,54 @@ function amrod_sync_process_batch($offset = 0, $batch_size = 200) {
         return ['success' => false, 'processed' => 0, 'more' => false];
     }
     
-    // For now, focus on the primary Products endpoint
-    $products_ep = $endpoints['products'] ?? null;
-    if (!$products_ep || !$products_ep['enabled']) {
-        amrod_sync_log('Products endpoint disabled or not found.');
-        return ['success' => false, 'processed' => 0, 'more' => false];
+    $total_processed = 0;
+    $max_total = 0;
+
+    // PRODUCTS: Main data import (uses offset/batching)
+    $products_result = amrod_sync_products_handler($offset, $batch_size, $token);
+    if ($products_result['processed'] > 0) {
+        $total_processed += $products_result['processed'];
+        $max_total = max($max_total, $products_result['total']);
+        amrod_sync_log("✅ Products: {$products_result['processed']} created/updated");
     }
 
-    $products_url = amrod_get_api_url() . $products_ep['path'];
-    $products = amrod_get_endpoint($token, $products_url);
-    if ($products === false || ! is_array($products)) {
-        amrod_sync_log('Products endpoint did not return valid data.');
-        return ['success' => false, 'processed' => 0, 'more' => false];
+    // STOCK: Update inventory for all products (runs for every batch)
+    $stock_result = amrod_sync_stock_handler($token);
+    if ($stock_result['processed'] > 0) {
+        amrod_sync_log("✅ Stock: {$stock_result['processed']} inventory values updated");
     }
 
-    $total = count($products);
-    $batch = array_slice($products, $offset, $batch_size);
-    $processed = 0;
-
-    foreach ($batch as $p) {
-        if (! isset($p['ProductCode'])) continue;
-
-        $existing_id = wc_get_product_id_by_sku($p['ProductCode']);
-        $wc_product = $existing_id ? wc_get_product($existing_id) : new WC_Product();
-        $wc_product->set_sku($p['ProductCode']);
-        $wc_product->set_name($p['Description'] ?? '');
-        $wc_product->set_regular_price($p['Price'] ?? 0);
-        $wc_product->set_description($p['LongDescription'] ?? '');
-        $wc_product->save();
-        $processed++;
+    // PRICES: Update prices for all products (runs for every batch)
+    $prices_result = amrod_sync_prices_handler($token);
+    if ($prices_result['processed'] > 0) {
+        amrod_sync_log("✅ Prices: {$prices_result['processed']} price values updated");
     }
 
-    // update counters (accumulate)
+    // CATEGORIES: Create categories (runs once per sync, not per batch)
+    if ($offset === 0) {
+        $categories_result = amrod_sync_categories_handler($token);
+        if ($categories_result['processed'] > 0) {
+            amrod_sync_log("✅ Categories: {$categories_result['processed']} categories processed");
+        }
+    }
+
+    // COLOURS: Update colour attributes for products (runs for every batch)
+    $colours_result = amrod_sync_colours_handler($token);
+    if ($colours_result['processed'] > 0) {
+        amrod_sync_log("✅ Colours: {$colours_result['processed']} products updated with colour data");
+    }
+
+    // Update global counters
     $prev_total = (int) get_option('amrod_total_products', 0);
-    update_option('amrod_total_products', $prev_total + $processed);
+    update_option('amrod_total_products', $prev_total + $total_processed);
     update_option('amrod_last_sync', current_time('mysql'));
 
-    amrod_sync_log("Processed batch: offset={$offset}, count={$processed}");
+    amrod_sync_log("Processed batch: offset={$offset}, count={$total_processed}, endpoints=5");
 
     $next_offset = $offset + $batch_size;
-    $more = $next_offset < $total;
+    $more = $next_offset < $max_total;
 
-    return ['success' => true, 'processed' => $processed, 'more' => $more, 'next_offset' => $next_offset, 'total' => $total];
+    return ['success' => true, 'processed' => $total_processed, 'more' => $more, 'next_offset' => $next_offset, 'total' => $max_total];
 }
 
 // Background batch handler using Action Scheduler (if available)
@@ -850,7 +1078,8 @@ function amrod_uninstall_cleanup() {
     $keys = [
         'amrod_username', 'amrod_password', 'amrod_customer_code', 'amrod_docs_url',
         'amrod_auth_url', 'amrod_api_url', 'amrod_endpoints',
-        'amrod_last_sync', 'amrod_total_products', 'amrod_errors', 'amrod_sync_log', 'amrod_last_token'
+        'amrod_last_sync', 'amrod_total_products', 'amrod_errors', 'amrod_sync_log', 
+        'amrod_last_token', 'amrod_category_map'
     ];
     foreach ($keys as $k) {
         delete_option($k);
