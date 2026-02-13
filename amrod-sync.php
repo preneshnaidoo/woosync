@@ -614,49 +614,74 @@ function amrod_sync_products_handler($offset = 0, $batch_size = 200, $token = ''
     $processed = 0;
 
     foreach ($batch as $p) {
-        if (! isset($p['ProductCode'])) {
-            amrod_sync_log('⚠️ Skipped product: missing ProductCode');
+        // Diagnostic: Log what we're trying to process
+        $product_code = $p['ProductCode'] ?? null;
+        
+        if (!$product_code) {
+            amrod_sync_log('⚠️ Skipped: missing ProductCode field');
             continue;
         }
 
-        $sku = sanitize_text_field($p['ProductCode']);
+        $sku = sanitize_text_field($product_code);
         $name = sanitize_text_field($p['Description'] ?? 'Product');
+        $price = isset($p['Price']) ? floatval($p['Price']) : 0;
+        
+        amrod_sync_log("Processing: SKU={$sku}, name={$name}, price={$price}");
+
         $existing_id = wc_get_product_id_by_sku($sku);
 
         // Get or CREATE product
-        if ($existing_id) {
-            $wc_product = wc_get_product($existing_id);
-        } else {
-            // CREATE NEW PRODUCT (FIX: use WC_Product_Simple for proper initialization)
-            $wc_product = new WC_Product_Simple();
-            $wc_product->set_status('publish');
-            $wc_product->set_catalog_visibility('visible');
-        }
+        try {
+            if ($existing_id) {
+                $wc_product = wc_get_product($existing_id);
+                amrod_sync_log("Found existing product ID: {$existing_id}");
+            } else {
+                // CREATE NEW PRODUCT using proper WooCommerce method
+                $wc_product = new WC_Product_Simple();
+                
+                // Set required fields BEFORE saving
+                $wc_product->set_name($name);
+                $wc_product->set_sku($sku);
+                $wc_product->set_status('publish');
+                $wc_product->set_catalog_visibility('visible');
+                $wc_product->set_regular_price($price > 0 ? $price : 0);
+                
+                amrod_sync_log("Created new WC_Product_Simple for SKU: {$sku}");
+            }
 
-        if (!$wc_product) {
-            amrod_sync_log("❌ Error: Could not create/fetch product for SKU: {$sku}");
+            if (!$wc_product || !is_a($wc_product, 'WC_Product')) {
+                amrod_sync_log("❌ CRITICAL: wc_product is not a valid WC_Product object for SKU: {$sku}");
+                continue;
+            }
+
+            // Update all fields
+            $wc_product->set_description($p['LongDescription'] ?? '');
+            
+            if (isset($p['Colour']) && !empty($p['Colour'])) {
+                $wc_product->set_attributes(['colour' => sanitize_text_field($p['Colour'])]);
+            }
+
+            // ATTEMPT SAVE with comprehensive error handling
+            try {
+                $product_id = $wc_product->save();
+                
+                if (!$product_id || $product_id === 0) {
+                    amrod_sync_log("❌ save() returned {$product_id} for SKU: {$sku}");
+                    continue;
+                }
+
+                amrod_sync_log("✅ Successfully saved product ID: {$product_id}, SKU: {$sku}");
+                $processed++;
+                
+            } catch (Exception $e) {
+                amrod_sync_log("❌ Exception during save() for SKU {$sku}: " . $e->getMessage());
+                continue;
+            }
+
+        } catch (Exception $e) {
+            amrod_sync_log("❌ Exception processing SKU {$sku}: " . $e->getMessage());
             continue;
         }
-
-        // Safely map all Amrod fields to WC product
-        $wc_product->set_sku($sku);
-        $wc_product->set_name($name);
-        $wc_product->set_regular_price(isset($p['Price']) && $p['Price'] > 0 ? floatval($p['Price']) : 0);
-        $wc_product->set_description($p['LongDescription'] ?? '');
-        
-        // Set additional fields if available
-        if (isset($p['Colour']) && !empty($p['Colour'])) {
-            $wc_product->set_attributes(['colour' => sanitize_text_field($p['Colour'])]);
-        }
-
-        // Attempt save and validate RESULT: must return product ID > 0
-        $product_id = $wc_product->save();
-        if (!$product_id || $product_id === 0) {
-            amrod_sync_log("❌ Failed to save product SKU: {$sku} (save returned: {$product_id})");
-            continue;
-        }
-
-        $processed++;
     }
 
     return ['processed' => $processed, 'total' => $total];
