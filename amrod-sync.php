@@ -23,20 +23,47 @@ function amrod_admin_notice_woocommerce_missing() {
     echo "<div class='notice notice-error'><p>❌ WooCommerce must be active for Amrod Sync to work. Plugin has been deactivated.</p></div>";
 }
 
-// --- Register Settings ---
+// --- Register Settings (including configurable endpoints) ---
 function amrod_sync_register_settings() {
     register_setting('amrod_sync_options_group', 'amrod_username', 'sanitize_text_field');
     register_setting('amrod_sync_options_group', 'amrod_password', 'sanitize_text_field');
     register_setting('amrod_sync_options_group', 'amrod_customer_code', 'sanitize_text_field');
     register_setting('amrod_sync_options_group', 'amrod_docs_url', 'esc_url_raw');
+    register_setting('amrod_sync_options_group', 'amrod_auth_url', 'esc_url_raw');
+    register_setting('amrod_sync_options_group', 'amrod_api_url', 'esc_url_raw');
+    register_setting('amrod_sync_options_group', 'amrod_products_endpoint', 'sanitize_text_field');
+    register_setting('amrod_sync_options_group', 'amrod_categories_endpoint', 'sanitize_text_field');
+    register_setting('amrod_sync_options_group', 'amrod_colours_endpoint', 'sanitize_text_field');
 }
 add_action('admin_init', 'amrod_sync_register_settings');
 
-/**
- * Return the configured Amrod API password.
- * Priority: Stored option (database) -> environment variable AMROD_API_PASSWORD -> constant AMROD_API_PASSWORD
- */
-function amrod_get_password() {
+// --- Endpoint Helpers ---
+function amrod_get_auth_url() {
+    return get_option('amrod_auth_url', 'https://identity.amrod.co.za');
+}
+
+function amrod_get_api_url() {
+    return get_option('amrod_api_url', 'https://vendorapi.amrod.co.za');
+}
+
+function amrod_get_token_endpoint() {
+    return amrod_get_auth_url() . '/VendorLogin';
+}
+
+function amrod_get_products_endpoint() {
+    $path = get_option('amrod_products_endpoint', '/api/v2/Catalogue/Product/GetAll');
+    return amrod_get_api_url() . $path;
+}
+
+function amrod_get_categories_endpoint() {
+    $path = get_option('amrod_categories_endpoint', '/api/v2/Catalogue/Category/GetAll');
+    return amrod_get_api_url() . $path;
+}
+
+function amrod_get_colours_endpoint() {
+    $path = get_option('amrod_colours_endpoint', '/api/v2/Colour/ColourSwatch/GetAll');
+    return amrod_get_api_url() . $path;
+}
     $stored = get_option('amrod_password');
     if ($stored) {
         return $stored;
@@ -174,16 +201,18 @@ add_filter('network_admin_plugin_action_links_' . plugin_basename(__FILE__), 'am
 add_filter('network_admin_plugin_action_links_amrod-sync.php', 'amrod_sync_plugin_action_links');
 add_filter('network_admin_plugin_action_links_amrod-sync/amrod-sync.php', 'amrod_sync_plugin_action_links');
 
-// --- Settings Page ---
+// --- Settings Page with Tabs ---
 function amrod_sync_settings_page() {
+    $active_tab = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'credentials';
     ?>
     <style>
-        .password-toggle {
-            cursor: pointer;
-            margin-left: 8px;
-            font-size: 18px;
-            user-select: none;
-        }
+        .password-toggle { cursor: pointer; margin-left: 8px; font-size: 18px; user-select: none; }
+        .nav-tab-wrapper { background-color: #fff; border-bottom: 1px solid #ccc; }
+        .nav-tab { padding: 8px 12px; text-decoration: none; color: #666; display: inline-block; border-bottom: 3px solid transparent; }
+        .nav-tab:hover { color: #000; }
+        .nav-tab.nav-tab-active { color: #000; border-bottom-color: #0073aa; }
+        .tab-content { display: none; padding: 20px; }
+        .tab-content.active { display: block; }
     </style>
     <script>
         function togglePasswordVisibility(fieldId) {
@@ -197,68 +226,132 @@ function amrod_sync_settings_page() {
                 toggle.textContent = '👁️';
             }
         }
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.getElementById('tab-' + tab).classList.add('active');
+            document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('nav-tab-active'));
+            event.target.classList.add('nav-tab-active');
+            var url = new URL(window.location);
+            url.searchParams.set('tab', tab);
+            window.history.pushState({}, '', url);
+        }
     </script>
     <div class="wrap">
         <h1>Amrod Sync Settings (v1.0.0.1)</h1>
         <?php settings_errors('amrod_sync_options_group'); ?>
 
         <?php if ($errors = get_option('amrod_errors')): ?>
-
             <div class="notice notice-error is-dismissible"><p>❌ <?php echo esc_html($errors); ?></p></div>
         <?php elseif ($last = get_option('amrod_last_sync')): ?>
             <div class="notice notice-success is-dismissible"><p>✅ Last sync completed at <?php echo esc_html($last); ?></p></div>
         <?php endif; ?>
 
-        <h2>Step 1: Credentials</h2>
-        <p style="max-width:60em">Request <strong>Username</strong>, <strong>Password</strong>, and <strong>Customer Code</strong> from Amrod support. You can enter your password securely below, and it will be stored encrypted in your database.</p>
-        <form method="post" action="options.php">
-            <?php settings_fields('amrod_sync_options_group'); ?>
+        <!-- Tab Navigation -->
+        <div class="nav-tab-wrapper">
+            <a href="#" class="nav-tab <?php echo $active_tab === 'credentials' ? 'nav-tab-active' : ''; ?>" onclick="switchTab('credentials'); return false;">Credentials</a>
+            <a href="#" class="nav-tab <?php echo $active_tab === 'endpoints' ? 'nav-tab-active' : ''; ?>" onclick="switchTab('endpoints'); return false;">API Endpoints</a>
+            <a href="#" class="nav-tab <?php echo $active_tab === 'sync' ? 'nav-tab-active' : ''; ?>" onclick="switchTab('sync'); return false;">Sync</a>
+            <a href="#" class="nav-tab <?php echo $active_tab === 'status' ? 'nav-tab-active' : ''; ?>" onclick="switchTab('status'); return false;">Status</a>
+        </div>
+
+        <!-- Credentials Tab -->
+        <div id="tab-credentials" class="tab-content <?php echo $active_tab === 'credentials' ? 'active' : ''; ?>">
+            <h2>Amrod API Credentials</h2>
+            <p style="max-width:60em">Request <strong>Username</strong>, <strong>Password</strong>, and <strong>Customer Code</strong> from <a href="https://marketing.amrod.co.za/landing/NewAPIAccessRequest" target="_blank">Amrod support</a>. Your credentials will be stored securely.</p>
+            <form method="post" action="options.php">
+                <?php settings_fields('amrod_sync_options_group'); ?>
+                <table class="form-table">
+                    <tr><th>Username</th><td><input type="text" name="amrod_username" value="<?php echo esc_attr(get_option('amrod_username')); ?>" style="width:100%;max-width:300px;" placeholder="vendor_username" /></td></tr>
+                    <tr><th>Password</th><td><input type="password" id="amrod_password_field" name="amrod_password" value="<?php echo esc_attr(get_option('amrod_password')); ?>" style="width:100%;max-width:300px;" /> <span class="password-toggle" onclick="togglePasswordVisibility('amrod_password_field')">👁️</span></td></tr>
+                    <tr><th>Customer Code</th><td><input type="text" name="amrod_customer_code" value="<?php echo esc_attr(get_option('amrod_customer_code')); ?>" style="width:100%;max-width:300px;" placeholder="e.g., ABC123" /></td></tr>
+                </table>
+                <?php submit_button('Save Credentials'); ?>
+            </form>
+        </div>
+
+        <!-- Endpoints Tab -->
+        <div id="tab-endpoints" class="tab-content <?php echo $active_tab === 'endpoints' ? 'active' : ''; ?>">
+            <h2>API Endpoints Configuration</h2>
+            <p style="max-width:60em">Customize the Amrod API endpoints. The defaults match the latest Amrod v2.0.10 API documentation.</p>
+            <form method="post" action="options.php">
+                <?php settings_fields('amrod_sync_options_group'); ?>
+                <table class="form-table">
+                    <tr><th>Auth Base URL</th><td><input type="url" name="amrod_auth_url" value="<?php echo esc_attr(get_option('amrod_auth_url', 'https://identity.amrod.co.za')); ?>" style="width:100%;max-width:400px;" /></td></tr>
+                    <tr><th>API Base URL</th><td><input type="url" name="amrod_api_url" value="<?php echo esc_attr(get_option('amrod_api_url', 'https://vendorapi.amrod.co.za')); ?>" style="width:100%;max-width:400px;" /></td></tr>
+                    <tr><th>Products Endpoint</th><td><input type="text" name="amrod_products_endpoint" value="<?php echo esc_attr(get_option('amrod_products_endpoint', '/api/v2/Catalogue/Product/GetAll')); ?>" style="width:100%;max-width:400px;" placeholder="/api/v2/Catalogue/Product/GetAll" /></td></tr>
+                    <tr><th>Categories Endpoint</th><td><input type="text" name="amrod_categories_endpoint" value="<?php echo esc_attr(get_option('amrod_categories_endpoint', '/api/v2/Catalogue/Category/GetAll')); ?>" style="width:100%;max-width:400px;" placeholder="/api/v2/Catalogue/Category/GetAll" /></td></tr>
+                    <tr><th>Colours Endpoint</th><td><input type="text" name="amrod_colours_endpoint" value="<?php echo esc_attr(get_option('amrod_colours_endpoint', '/api/v2/Colour/ColourSwatch/GetAll')); ?>" style="width:100%;max-width:400px;" placeholder="/api/v2/Colour/ColourSwatch/GetAll" /></td></tr>
+                    <tr><th>Docs URL</th><td><input type="url" name="amrod_docs_url" value="<?php echo esc_attr(get_option('amrod_docs_url', 'https://newapidocs.amrod.co.za/#ver-2010-summary')); ?>" style="width:100%;max-width:400px;" /></td></tr>
+                </table>
+                <?php submit_button('Save Endpoints'); ?>
+            </form>
+        </div>
+
+        <!-- Sync Tab -->
+        <div id="tab-sync" class="tab-content <?php echo $active_tab === 'sync' ? 'active' : ''; ?>">
+            <h2>Manual Sync Controls</h2>
+            <p style="max-width:60em">Click <strong>Fetch Token</strong> to validate your credentials and obtain an access token. Then use <strong>Run Sync Now</strong> to import products from Amrod.</p>
+            <form method="post">
+                <?php wp_nonce_field('amrod_sync_action','amrod_sync_nonce'); ?>
+                <p>
+                    <input type="submit" name="get_token" class="button" value="Fetch Token">
+                    <input type="submit" name="run_sync" class="button button-primary" value="Run Sync Now">
+                </p>
+                <p style="color:#666;"><strong>Last Token (masked):</strong> <code><?php echo esc_html(get_option('amrod_last_token') ?: '(not yet fetched)'); ?></code></p>
+            </form>
+            
+            <h3>Recent Sync Log</h3>
+            <?php 
+                $log = array_reverse((array) get_option('amrod_sync_log', []));
+                if (empty($log)): 
+            ?>
+                <p><em>No log entries yet.</em></p>
+            <?php else: ?>
+                <ul style="font-family:monospace;background:#f5f5f5;padding:12px;border:1px solid #ddd;max-height:300px;overflow:auto;">
+                    <?php foreach (array_slice($log, 0, 20) as $l): ?>
+                        <li><?php echo esc_html($l); ?></li>
+                    <?php endforeach; ?>
+                </ul>
+                <form method="post" style="margin-top:1em;">
+                    <?php wp_nonce_field('amrod_sync_action','amrod_sync_nonce'); ?>
+                    <input type="hidden" name="clear_sync_log" value="1" />
+                    <input type="submit" class="button" value="Clear Sync Log">
+                </form>
+            <?php endif; ?>
+        </div>
+
+        <!-- Status Tab -->
+        <div id="tab-status" class="tab-content <?php echo $active_tab === 'status' ? 'active' : ''; ?>">
+            <h2>Sync Status & Details</h2>
+            <?php 
+                $last_sync = get_option('amrod_last_sync');
+                $total = (int) get_option('amrod_total_products', 0);
+                $last_token = get_option('amrod_last_token');
+            ?>
             <table class="form-table">
-                <tr><th>Username <span title="Your Amrod API username">?</span></th><td><input type="text" name="amrod_username" value="<?php echo esc_attr(get_option('amrod_username')); ?>" /></td></tr>
-                <tr><th>Password <span title="Your Amrod API password">?</span></th><td><input type="password" id="amrod_password_field" name="amrod_password" value="<?php echo esc_attr(get_option('amrod_password')); ?>" /> <span class="password-toggle" onclick="togglePasswordVisibility('amrod_password_field')" title="Toggle password visibility">👁️</span></td></tr>
-                <tr><th>Customer Code <span title="Provided by Amrod, usually 6 characters">?</span></th><td><input type="text" name="amrod_customer_code" value="<?php echo esc_attr(get_option('amrod_customer_code')); ?>" /></td></tr>
-                <tr><th>Docs URL <span title="Link to latest Amrod API docs">?</span></th><td><input type="text" name="amrod_docs_url" value="<?php echo esc_attr(get_option('amrod_docs_url', 'https://newapidocs.amrod.co.za/#intro')); ?>" /></td></tr>
+                <tr><th>Last Sync</th><td><?php echo $last_sync ? esc_html($last_sync) : '<em>Never</em>'; ?></td></tr>
+                <tr><th>Total Products Synced</th><td><?php echo esc_html($total); ?></td></tr>
+                <tr><th>Last Token (Masked)</th><td><code><?php echo $last_token ? esc_html($last_token) : '<em>Not yet fetched</em>'; ?></code></td></tr>
+                <?php if (function_exists('as_get_scheduled_actions')): ?>
+                    <tr><th>Action Scheduler Queue</th><td><?php echo count(as_get_scheduled_actions(['hook' => 'amrod_sync_batch'])); ?> queued batches</td></tr>
+                <?php else: ?>
+                    <tr><th>Background Processing</th><td><em>Action Scheduler not available - using synchronous mode</em></td></tr>
+                <?php endif; ?>
             </table>
 
-            <h2>Step 2: Save Credentials</h2>
-            <p>Click "Save Changes" to store your Amrod credentials. This plugin performs manual syncs only — use the buttons below to run a sync.</p>
+            <h3>API Configuration (Current)</h3>
+            <table class="form-table" style="max-width:100%;">
+                <tr><th>Auth URL</th><td><code><?php echo esc_html(amrod_get_auth_url()); ?></code></td></tr>
+                <tr><th>Token Endpoint</th><td><code><?php echo esc_html(amrod_get_token_endpoint()); ?></code></td></tr>
+                <tr><th>API Base URL</th><td><code><?php echo esc_html(amrod_get_api_url()); ?></code></td></tr>
+                <tr><th>Products Endpoint</th><td><code><?php echo esc_html(amrod_get_products_endpoint()); ?></code></td></tr>
+                <tr><th>Categories Endpoint</th><td><code><?php echo esc_html(amrod_get_categories_endpoint()); ?></code></td></tr>
+                <tr><th>Colours Endpoint</th><td><code><?php echo esc_html(amrod_get_colours_endpoint()); ?></code></td></tr>
+            </table>
 
-            <?php submit_button(); ?>
-        </form>
-
-        <h2>Step 3: Run Manual Sync</h2>
-        <p>Click <strong>Fetch Token</strong> to validate credentials and cache an access token for syncing. The token is cached transiently and shown masked for security.</p>
-        <form method="post">
-            <?php wp_nonce_field('amrod_sync_action','amrod_sync_nonce'); ?>
-            <input type="submit" name="run_sync" class="button button-primary" value="Run Sync Now">
-            <input type="submit" name="get_token" class="button" value="Fetch Token">
-            <span style="margin-left:1em;color:#666">Last token: <code><?php echo esc_html(get_option('amrod_last_token')); ?></code></span>
-        </form>
-
-        <h2>Step 4: Stats</h2>
-        <p>Last Sync: <?php echo esc_html(get_option('amrod_last_sync')); ?></p>
-        <p>Total Products Synced: <?php echo esc_html(get_option('amrod_total_products')); ?></p>
-
-        <h3>Recent sync log</h3>
-        <?php $log = array_reverse((array) get_option('amrod_sync_log', [])); ?>
-        <?php if (empty($log)): ?>
-            <p><em>No log entries yet.</em></p>
-        <?php else: ?>
-            <ul style="font-family:monospace;background:#fff;padding:8px;border:1px solid #eee;max-height:200px;overflow:auto;">
-                <?php foreach (array_slice($log, 0, 10) as $l): ?>
-                    <li><?php echo esc_html($l); ?></li>
-                <?php endforeach; ?>
-            </ul>
-            <form method="post" style="margin-top:.5em">
-                <?php wp_nonce_field('amrod_sync_action','amrod_sync_nonce'); ?>
-                <input type="hidden" name="clear_sync_log" value="1" />
-                <input type="submit" class="button" value="Clear sync log">
-            </form>
-        <?php endif; ?>
-
-        <h2>Documentation</h2>
-        <p>Plugin Version: 1.0.0.1</p>
-        <p><a href="<?php echo esc_url(get_option('amrod_docs_url')); ?>" target="_blank">View Latest Amrod Docs</a></p>
+            <h3>Documentation</h3>
+            <p><a href="<?php echo esc_url(get_option('amrod_docs_url', 'https://newapidocs.amrod.co.za/#ver-2010-summary')); ?>" class="button" target="_blank">View Amrod API Docs (v2.0.10)</a></p>
+        </div>
     </div>
     <?php
 }
@@ -276,7 +369,7 @@ function amrod_get_token() {
         return $cached;
     }
 
-    $auth_url = "https://identity.amrod.co.za/VendorLogin";
+    $auth_url = amrod_get_token_endpoint();
     $payload = json_encode([
         'username'     => get_option('amrod_username'),
         'password'     => amrod_get_password(),
@@ -320,11 +413,9 @@ function amrod_get_token() {
 }  
 
 // --- Endpoint Helper ---
-function amrod_get_endpoint($token, $endpoint, $retries = 2) {
-    $url = "https://vendorapi.amrod.co.za/" . ltrim($endpoint, '/');
-
+function amrod_get_endpoint($token, $endpoint_url, $retries = 2) {
     for ($attempt = 0; $attempt <= $retries; $attempt++) {
-        $response = wp_remote_get($url, [
+        $response = wp_remote_get($endpoint_url, [
             'headers' => ["Authorization" => "Bearer $token"],
             'timeout' => 20,
         ]);
@@ -333,7 +424,7 @@ function amrod_get_endpoint($token, $endpoint, $retries = 2) {
             $err = $response->get_error_message();
             // if final attempt, record error
             if ($attempt === $retries) {
-                update_option('amrod_errors', "Endpoint error ({$endpoint}): {$err}");
+                update_option('amrod_errors', "Endpoint error: {$err}");
                 return false;
             }
         } else {
@@ -350,12 +441,12 @@ function amrod_get_endpoint($token, $endpoint, $retries = 2) {
 
                 // invalid JSON
                 if ($attempt === $retries) {
-                    update_option('amrod_errors', "Invalid JSON from {$endpoint}: " . json_last_error_msg());
+                    update_option('amrod_errors', "Invalid JSON from endpoint: " . json_last_error_msg());
                     return false;
                 }
             } else {
                 if ($attempt === $retries) {
-                    update_option('amrod_errors', "Endpoint {$endpoint} returned HTTP {$code}");
+                    update_option('amrod_errors', "Endpoint returned HTTP {$code}");
                     return false;
                 }
             }
@@ -387,7 +478,8 @@ function amrod_sync_process_batch($offset = 0, $batch_size = 200) {
         return ['success' => false, 'processed' => 0, 'more' => false];
     }
 
-    $products = amrod_get_endpoint($token, 'products');
+    $products_endpoint = amrod_get_products_endpoint();
+    $products = amrod_get_endpoint($token, $products_endpoint);
     if ($products === false || ! is_array($products)) {
         amrod_sync_log('Products endpoint did not return valid data.');
         return ['success' => false, 'processed' => 0, 'more' => false];
@@ -571,6 +663,7 @@ register_uninstall_hook(__FILE__, 'amrod_uninstall_cleanup');
 function amrod_uninstall_cleanup() {
     $keys = [
         'amrod_username', 'amrod_password', 'amrod_customer_code', 'amrod_docs_url',
+        'amrod_auth_url', 'amrod_api_url', 'amrod_products_endpoint', 'amrod_categories_endpoint', 'amrod_colours_endpoint',
         'amrod_last_sync', 'amrod_total_products', 'amrod_errors', 'amrod_sync_log', 'amrod_last_token'
     ];
     foreach ($keys as $k) {
