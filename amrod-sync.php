@@ -31,11 +31,63 @@ function amrod_sync_register_settings() {
     register_setting('amrod_sync_options_group', 'amrod_docs_url', 'esc_url_raw');
     register_setting('amrod_sync_options_group', 'amrod_auth_url', 'esc_url_raw');
     register_setting('amrod_sync_options_group', 'amrod_api_url', 'esc_url_raw');
-    register_setting('amrod_sync_options_group', 'amrod_products_endpoint', 'sanitize_text_field');
-    register_setting('amrod_sync_options_group', 'amrod_categories_endpoint', 'sanitize_text_field');
-    register_setting('amrod_sync_options_group', 'amrod_colours_endpoint', 'sanitize_text_field');
+    register_setting('amrod_sync_options_group', 'amrod_endpoints', 'sanitize_text_field');
 }
 add_action('admin_init', 'amrod_sync_register_settings');
+
+// Get default endpoints
+function amrod_get_default_endpoints() {
+    return [
+        'products' => ['label' => 'Products', 'path' => '/api/v1/Products/', 'enabled' => 1],
+        'products_updated' => ['label' => 'Products (Updated)', 'path' => '/api/v1/Products/GetUpdatedProducts', 'enabled' => 0],
+        'products_branding' => ['label' => 'Products with Branding', 'path' => '/api/v1/Products/GetProductsAndBranding', 'enabled' => 0],
+        'products_updated_branding' => ['label' => 'Products Updated with Branding', 'path' => '/api/v1/Products/GetUpdatedProductsAndBranding', 'enabled' => 0],
+        'stock' => ['label' => 'Stock', 'path' => '/api/v1/Stock/', 'enabled' => 0],
+        'stock_updated' => ['label' => 'Stock (Updated)', 'path' => '/api/v1/Stock/GetUpdated', 'enabled' => 0],
+        'prices' => ['label' => 'Prices', 'path' => '/api/v1/Prices/', 'enabled' => 0],
+        'prices_updated' => ['label' => 'Prices (Updated)', 'path' => '/api/v1/Prices/GetUpdated', 'enabled' => 0],
+        'categories' => ['label' => 'Categories', 'path' => '/api/v1/Categories/', 'enabled' => 0],
+        'categories_updated' => ['label' => 'Categories (Updated)', 'path' => '/api/v1/Categories/GetUpdated', 'enabled' => 0],
+        'brands' => ['label' => 'Brands', 'path' => '/api/v1/Brands/', 'enabled' => 0],
+        'brands_updated' => ['label' => 'Brands (Updated)', 'path' => '/api/v1/Brands/GetUpdated', 'enabled' => 0],
+        'branding_depts' => ['label' => 'Branding Departments', 'path' => '/api/v1/BrandingDepartments/', 'enabled' => 0],
+        'branding_depts_updated' => ['label' => 'Branding Departments (Updated)', 'path' => '/api/v1/BrandingDepartments/GetUpdated', 'enabled' => 0],
+        'inclusive_brandings' => ['label' => 'Inclusive Brandings', 'path' => '/api/v1/InclusiveBrandings/', 'enabled' => 0],
+        'inclusive_brandings_updated' => ['label' => 'Inclusive Brandings (Updated)', 'path' => '/api/v1/InclusiveBrandings/GetUpdated', 'enabled' => 0],
+        'branding_prices' => ['label' => 'Branding Prices', 'path' => '/api/v1/BrandingPrices/', 'enabled' => 0],
+        'branding_prices_updated' => ['label' => 'Branding Prices (Updated)', 'path' => '/api/v1/BrandingPrices/GetUpdated', 'enabled' => 0],
+        'colour_swatches' => ['label' => 'Colour Swatches', 'path' => '/api/v1/ColourSwatches/', 'enabled' => 0],
+        'colour_groups' => ['label' => 'Colour Groups', 'path' => '/api/v1/ColourSwatches/GetGrouping', 'enabled' => 0],
+    ];
+}
+
+// Get user's configured endpoints (merged with defaults)
+function amrod_get_endpoints() {
+    $defaults = amrod_get_default_endpoints();
+    $stored = get_option('amrod_endpoints');
+    if ($stored && is_string($stored)) {
+        $stored = @json_decode($stored, true);
+        if (is_array($stored)) {
+            // Merge: keep stored config, add any new defaults
+            foreach ($defaults as $key => $default) {
+                if (isset($stored[$key])) {
+                    // Preserve stored enabled/label/path, fill in missing fields from default
+                    $stored[$key] = array_merge($default, $stored[$key]);
+                } else {
+                    // New endpoint, use default
+                    $stored[$key] = $default;
+                }
+            }
+            return $stored;
+        }
+    }
+    return $defaults;
+}
+
+// Save endpoints config
+function amrod_save_endpoints($endpoints) {
+    update_option('amrod_endpoints', json_encode($endpoints));
+}
 
 // --- Endpoint Helpers ---
 function amrod_get_auth_url() {
@@ -50,19 +102,37 @@ function amrod_get_token_endpoint() {
     return amrod_get_auth_url() . '/VendorLogin';
 }
 
+// Get the enabled products endpoint (for backwards compatibility)
 function amrod_get_products_endpoint() {
-    $path = get_option('amrod_products_endpoint', '/vendor/products');
-    return amrod_get_api_url() . $path;
+    $endpoints = amrod_get_endpoints();
+    $products_ep = $endpoints['products'] ?? null;
+    if ($products_ep && $products_ep['enabled']) {
+        return amrod_get_api_url() . $products_ep['path'];
+    }
+    // fallback
+    return amrod_get_api_url() . '/api/v1/Products/';
 }
 
+// Get the enabled categories endpoint (for backwards compatibility)
 function amrod_get_categories_endpoint() {
-    $path = get_option('amrod_categories_endpoint', '/vendor/categories');
-    return amrod_get_api_url() . $path;
+    $endpoints = amrod_get_endpoints();
+    $categories_ep = $endpoints['categories'] ?? null;
+    if ($categories_ep && $categories_ep['enabled']) {
+        return amrod_get_api_url() . $categories_ep['path'];
+    }
+    // fallback
+    return amrod_get_api_url() . '/api/v1/Categories/';
 }
 
+// Get the enabled colours endpoint (for backwards compatibility)
 function amrod_get_colours_endpoint() {
-    $path = get_option('amrod_colours_endpoint', '/vendor/colours');
-    return amrod_get_api_url() . $path;
+    $endpoints = amrod_get_endpoints();
+    $colours_ep = $endpoints['colour_swatches'] ?? null;
+    if ($colours_ep && $colours_ep['enabled']) {
+        return amrod_get_api_url() . $colours_ep['path'];
+    }
+    // fallback
+    return amrod_get_api_url() . '/api/v1/ColourSwatches/';
 }
 
 /**
@@ -275,30 +345,51 @@ function amrod_sync_settings_page() {
             </form>
         </div>
 
-        <!-- Endpoints Tab -->
+        <!-- Endpoints Manager Tab -->
         <div id="tab-endpoints" class="tab-content <?php echo $active_tab === 'endpoints' ? 'active' : ''; ?>">
-            <h2>API Endpoints Configuration</h2>
-            <p style="max-width:60em">Customize the Amrod API endpoints. If you experience "did not return valid data" errors, try alternative endpoint patterns below.</p>
-            <div style="background:#fff3cd;border:1px solid #ffc107;padding:10px;margin-bottom:15px;border-radius:3px;">
-                <strong>⚠️ Common Endpoint Patterns:</strong>
-                <ul style="margin:5px 0 0 20px;">
-                    <li><code>/vendor/products</code>, <code>/products</code></li>
-                    <li><code>/api/v2/Catalogue/Product/GetAll</code>, <code>/api/v2/Catalogue/Product/Get</code></li>
-                    <li><code>/catalogue/products</code>, <code>/Catalogue/Product</code></li>
-                </ul>
-                <p style="margin:5px 0 0 0;">Check the <a href="<?php echo esc_url(get_option('amrod_docs_url', 'https://newapidocs.amrod.co.za/#ver-2010-summary')); ?>" target="_blank">Amrod API documentation</a> for the correct endpoint format.</p>
+            <h2>API Endpoints Manager (v1.0)</h2>
+            <p style="max-width:60em">Enable/disable endpoints, customize their paths, and rename labels. All endpoints use the Amrod API v1 base URL: <code><?php echo esc_html(amrod_get_api_url()); ?></code></p>
+            
+            <div style="background:#e8f5e9;border:1px solid #4caf50;padding:12px;margin-bottom:15px;border-radius:3px;">
+                <strong>✅ Amrod API v1 Endpoints Detected!</strong><br>Base URL: <code><?php echo esc_html(amrod_get_api_url()); ?></code>/api/v1/
             </div>
-            <form method="post" action="options.php">
-                <?php settings_fields('amrod_sync_options_group'); ?>
+
+            <form method="post">
+                <?php wp_nonce_field('amrod_manage_endpoints'); ?>
+                <table class="wp-list-table widefat striped" style="margin-top:20px;">
+                    <thead>
+                        <tr>
+                            <th style="width:40px;"><input type="checkbox" id="select-all" onclick="document.querySelectorAll('.amrod-endpoint-check').forEach(el => el.checked = this.checked);" /></th>
+                            <th>Enabled</th>
+                            <th>Label</th>
+                            <th>Endpoint Path</th>
+                            <th>Full URL</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php 
+                            $endpoints = amrod_get_endpoints();
+                            foreach ($endpoints as $key => $ep): 
+                        ?>
+                            <tr>
+                                <td><input type="checkbox" class="amrod-endpoint-check" name="endpoints[<?php echo esc_attr($key); ?>][enabled]" value="1" <?php checked($ep['enabled']); ?> /></td>
+                                <td><?php echo $ep['enabled'] ? '✅' : '❌'; ?></td>
+                                <td><input type="text" name="endpoints[<?php echo esc_attr($key); ?>][label]" value="<?php echo esc_attr($ep['label']); ?>" style="width:100%;max-width:200px;" /></td>
+                                <td><input type="text" name="endpoints[<?php echo esc_attr($key); ?>][path]" value="<?php echo esc_attr($ep['path']); ?>" style="width:100%;max-width:300px;" placeholder="/api/v1/..." /></td>
+                                <td><code style="font-size:11px;"><?php echo esc_html(amrod_get_api_url() . $ep['path']); ?></code></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+
+                <h3 style="margin-top:20px;">Base URLs</h3>
                 <table class="form-table">
                     <tr><th>Auth Base URL</th><td><input type="url" name="amrod_auth_url" value="<?php echo esc_attr(get_option('amrod_auth_url', 'https://identity.amrod.co.za')); ?>" style="width:100%;max-width:400px;" /></td></tr>
                     <tr><th>API Base URL</th><td><input type="url" name="amrod_api_url" value="<?php echo esc_attr(get_option('amrod_api_url', 'https://vendorapi.amrod.co.za')); ?>" style="width:100%;max-width:400px;" /></td></tr>
-                    <tr><th>Products Endpoint</th><td><input type="text" name="amrod_products_endpoint" value="<?php echo esc_attr(get_option('amrod_products_endpoint', '/vendor/products')); ?>" style="width:100%;max-width:400px;" placeholder="/vendor/products" /></td></tr>
-                    <tr><th>Categories Endpoint</th><td><input type="text" name="amrod_categories_endpoint" value="<?php echo esc_attr(get_option('amrod_categories_endpoint', '/vendor/categories')); ?>" style="width:100%;max-width:400px;" placeholder="/vendor/categories" /></td></tr>
-                    <tr><th>Colours Endpoint</th><td><input type="text" name="amrod_colours_endpoint" value="<?php echo esc_attr(get_option('amrod_colours_endpoint', '/vendor/colours')); ?>" style="width:100%;max-width:400px;" placeholder="/vendor/colours" /></td></tr>
                     <tr><th>Docs URL</th><td><input type="url" name="amrod_docs_url" value="<?php echo esc_attr(get_option('amrod_docs_url', 'https://newapidocs.amrod.co.za/#ver-2010-summary')); ?>" style="width:100%;max-width:400px;" /></td></tr>
                 </table>
-                <?php submit_button('Save Endpoints'); ?>
+
+                <?php submit_button('Save Endpoints Configuration', 'primary', 'save_endpoints'); ?>
             </form>
         </div>
 
@@ -510,8 +601,24 @@ function amrod_sync_process_batch($offset = 0, $batch_size = 200) {
         return ['success' => false, 'processed' => 0, 'more' => false];
     }
 
-    $products_endpoint = amrod_get_products_endpoint();
-    $products = amrod_get_endpoint($token, $products_endpoint);
+    // Get enabled endpoints
+    $endpoints = amrod_get_endpoints();
+    $enabled_endpoints = array_filter($endpoints, function($e) { return $e['enabled']; });
+    
+    if (empty($enabled_endpoints)) {
+        amrod_sync_log('No endpoints enabled for sync.');
+        return ['success' => false, 'processed' => 0, 'more' => false];
+    }
+    
+    // For now, focus on the primary Products endpoint
+    $products_ep = $endpoints['products'] ?? null;
+    if (!$products_ep || !$products_ep['enabled']) {
+        amrod_sync_log('Products endpoint disabled or not found.');
+        return ['success' => false, 'processed' => 0, 'more' => false];
+    }
+
+    $products_url = amrod_get_api_url() . $products_ep['path'];
+    $products = amrod_get_endpoint($token, $products_url);
     if ($products === false || ! is_array($products)) {
         amrod_sync_log('Products endpoint did not return valid data.');
         return ['success' => false, 'processed' => 0, 'more' => false];
@@ -545,7 +652,7 @@ function amrod_sync_process_batch($offset = 0, $batch_size = 200) {
     $more = $next_offset < $total;
 
     return ['success' => true, 'processed' => $processed, 'more' => $more, 'next_offset' => $next_offset, 'total' => $total];
-}
+}}
 
 // Background batch handler using Action Scheduler (if available)
 add_action('amrod_sync_batch', 'amrod_sync_batch_handler');
@@ -629,6 +736,54 @@ function amrod_handle_post_actions() {
     }
 }
 
+// Handle endpoints configuration save
+add_action('admin_init', 'amrod_handle_endpoints_save', 11);
+function amrod_handle_endpoints_save() {
+    if (empty($_POST) || ! isset($_POST['save_endpoints'])) {
+        return;
+    }
+    if (! current_user_can('manage_options')) {
+        return;
+    }
+    if (! wp_verify_nonce($_POST['_wpnonce'], 'amrod_manage_endpoints')) {
+        return;
+    }
+
+    // Save base URLs
+    if (isset($_POST['amrod_auth_url'])) {
+        update_option('amrod_auth_url', esc_url_raw($_POST['amrod_auth_url']));
+    }
+    if (isset($_POST['amrod_api_url'])) {
+        update_option('amrod_api_url', esc_url_raw($_POST['amrod_api_url']));
+    }
+    if (isset($_POST['amrod_docs_url'])) {
+        update_option('amrod_docs_url', esc_url_raw($_POST['amrod_docs_url']));
+    }
+
+    // Save endpoints configuration
+    if (isset($_POST['endpoints']) && is_array($_POST['endpoints'])) {
+        $endpoints = amrod_get_default_endpoints();
+        
+        foreach ($_POST['endpoints'] as $key => $data) {
+            if (!isset($endpoints[$key])) continue;
+            
+            $endpoints[$key]['enabled'] = isset($data['enabled']) ? 1 : 0;
+            if (isset($data['label'])) {
+                $endpoints[$key]['label'] = sanitize_text_field($data['label']);
+            }
+            if (isset($data['path'])) {
+                $endpoints[$key]['path'] = sanitize_text_field($data['path']);
+            }
+        }
+        
+        amrod_save_endpoints($endpoints);
+        amrod_sync_log('Endpoints configuration updated.');
+    }
+
+    // Redirect to avoid form resubmission
+    wp_safe_remote_post(admin_url('admin.php?page=amrod-sync&tab=endpoints'));
+}
+
 /**
  * WP‑CLI commands for Amrod Sync
  *
@@ -694,7 +849,7 @@ register_uninstall_hook(__FILE__, 'amrod_uninstall_cleanup');
 function amrod_uninstall_cleanup() {
     $keys = [
         'amrod_username', 'amrod_password', 'amrod_customer_code', 'amrod_docs_url',
-        'amrod_auth_url', 'amrod_api_url', 'amrod_products_endpoint', 'amrod_categories_endpoint', 'amrod_colours_endpoint',
+        'amrod_auth_url', 'amrod_api_url', 'amrod_endpoints',
         'amrod_last_sync', 'amrod_total_products', 'amrod_errors', 'amrod_sync_log', 'amrod_last_token'
     ];
     foreach ($keys as $k) {
