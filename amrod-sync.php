@@ -620,15 +620,17 @@ function amrod_sync_products_handler($offset = 0, $batch_size = 200, $token = ''
         }
 
         $sku = sanitize_text_field($p['ProductCode']);
+        $name = sanitize_text_field($p['Description'] ?? 'Product');
         $existing_id = wc_get_product_id_by_sku($sku);
 
         // Get or CREATE product
         if ($existing_id) {
             $wc_product = wc_get_product($existing_id);
         } else {
-            // CREATE NEW PRODUCT (FIX: set type requirement)
-            $wc_product = new WC_Product();
-            $wc_product->set_type('simple');  // ✅ CRITICAL: Set product type
+            // CREATE NEW PRODUCT (FIX: use WC_Product_Simple for proper initialization)
+            $wc_product = new WC_Product_Simple();
+            $wc_product->set_status('publish');
+            $wc_product->set_catalog_visibility('visible');
         }
 
         if (!$wc_product) {
@@ -638,7 +640,7 @@ function amrod_sync_products_handler($offset = 0, $batch_size = 200, $token = ''
 
         // Safely map all Amrod fields to WC product
         $wc_product->set_sku($sku);
-        $wc_product->set_name($p['Description'] ?? 'Product');
+        $wc_product->set_name($name);
         $wc_product->set_regular_price(isset($p['Price']) && $p['Price'] > 0 ? floatval($p['Price']) : 0);
         $wc_product->set_description($p['LongDescription'] ?? '');
         
@@ -647,10 +649,10 @@ function amrod_sync_products_handler($offset = 0, $batch_size = 200, $token = ''
             $wc_product->set_attributes(['colour' => sanitize_text_field($p['Colour'])]);
         }
 
-        // Attempt save and validate
-        $save_result = $wc_product->save();
-        if ($save_result === 0) {
-            amrod_sync_log("❌ Failed to save product SKU: {$sku} (save returned 0)");
+        // Attempt save and validate RESULT: must return product ID > 0
+        $product_id = $wc_product->save();
+        if (!$product_id || $product_id === 0) {
+            amrod_sync_log("❌ Failed to save product SKU: {$sku} (save returned: {$product_id})");
             continue;
         }
 
