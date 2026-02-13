@@ -1,0 +1,20 @@
+<svg viewBox="0 0 200 70" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+  <!-- Background -->
+  <rect width="200" height="70" fill="none"/>
+  
+  <!-- M Letter -->
+  <path d="M 20 55 L 20 15 L 35 15 L 40 35 L 45 15 L 60 15 L 60 55 M 20 15 L 60 55" 
+        stroke="#007bff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- P Letter -->
+  <path d="M 75 55 L 75 15 L 95 15 Q 100 15 100 22 L 100 28 Q 100 35 95 35 L 75 35" 
+        stroke="#28a745" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Text: mediaplatform -->
+  <text x="110" y="45" font-family="'Myriad Pro', sans-serif" font-size="14" font-weight="600" fill="#333">
+    mediaplatform
+  </text>
+  
+  <!-- Accent line -->
+  <line x1="20" y1="60" x2="170" y2="60" stroke="#007bff" stroke-width="1.5" opacity="0.3"/>
+</svg>
