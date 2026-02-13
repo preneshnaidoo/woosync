@@ -51,17 +51,17 @@ function amrod_get_token_endpoint() {
 }
 
 function amrod_get_products_endpoint() {
-    $path = get_option('amrod_products_endpoint', '/api/v2/Catalogue/Product/GetAll');
+    $path = get_option('amrod_products_endpoint', '/vendor/products');
     return amrod_get_api_url() . $path;
 }
 
 function amrod_get_categories_endpoint() {
-    $path = get_option('amrod_categories_endpoint', '/api/v2/Catalogue/Category/GetAll');
+    $path = get_option('amrod_categories_endpoint', '/vendor/categories');
     return amrod_get_api_url() . $path;
 }
 
 function amrod_get_colours_endpoint() {
-    $path = get_option('amrod_colours_endpoint', '/api/v2/Colour/ColourSwatch/GetAll');
+    $path = get_option('amrod_colours_endpoint', '/vendor/colours');
     return amrod_get_api_url() . $path;
 }
 
@@ -278,15 +278,24 @@ function amrod_sync_settings_page() {
         <!-- Endpoints Tab -->
         <div id="tab-endpoints" class="tab-content <?php echo $active_tab === 'endpoints' ? 'active' : ''; ?>">
             <h2>API Endpoints Configuration</h2>
-            <p style="max-width:60em">Customize the Amrod API endpoints. The defaults match the latest Amrod v2.0.10 API documentation.</p>
+            <p style="max-width:60em">Customize the Amrod API endpoints. If you experience "did not return valid data" errors, try alternative endpoint patterns below.</p>
+            <div style="background:#fff3cd;border:1px solid #ffc107;padding:10px;margin-bottom:15px;border-radius:3px;">
+                <strong>⚠️ Common Endpoint Patterns:</strong>
+                <ul style="margin:5px 0 0 20px;">
+                    <li><code>/vendor/products</code>, <code>/products</code></li>
+                    <li><code>/api/v2/Catalogue/Product/GetAll</code>, <code>/api/v2/Catalogue/Product/Get</code></li>
+                    <li><code>/catalogue/products</code>, <code>/Catalogue/Product</code></li>
+                </ul>
+                <p style="margin:5px 0 0 0;">Check the <a href="<?php echo esc_url(get_option('amrod_docs_url', 'https://newapidocs.amrod.co.za/#ver-2010-summary')); ?>" target="_blank">Amrod API documentation</a> for the correct endpoint format.</p>
+            </div>
             <form method="post" action="options.php">
                 <?php settings_fields('amrod_sync_options_group'); ?>
                 <table class="form-table">
                     <tr><th>Auth Base URL</th><td><input type="url" name="amrod_auth_url" value="<?php echo esc_attr(get_option('amrod_auth_url', 'https://identity.amrod.co.za')); ?>" style="width:100%;max-width:400px;" /></td></tr>
                     <tr><th>API Base URL</th><td><input type="url" name="amrod_api_url" value="<?php echo esc_attr(get_option('amrod_api_url', 'https://vendorapi.amrod.co.za')); ?>" style="width:100%;max-width:400px;" /></td></tr>
-                    <tr><th>Products Endpoint</th><td><input type="text" name="amrod_products_endpoint" value="<?php echo esc_attr(get_option('amrod_products_endpoint', '/api/v2/Catalogue/Product/GetAll')); ?>" style="width:100%;max-width:400px;" placeholder="/api/v2/Catalogue/Product/GetAll" /></td></tr>
-                    <tr><th>Categories Endpoint</th><td><input type="text" name="amrod_categories_endpoint" value="<?php echo esc_attr(get_option('amrod_categories_endpoint', '/api/v2/Catalogue/Category/GetAll')); ?>" style="width:100%;max-width:400px;" placeholder="/api/v2/Catalogue/Category/GetAll" /></td></tr>
-                    <tr><th>Colours Endpoint</th><td><input type="text" name="amrod_colours_endpoint" value="<?php echo esc_attr(get_option('amrod_colours_endpoint', '/api/v2/Colour/ColourSwatch/GetAll')); ?>" style="width:100%;max-width:400px;" placeholder="/api/v2/Colour/ColourSwatch/GetAll" /></td></tr>
+                    <tr><th>Products Endpoint</th><td><input type="text" name="amrod_products_endpoint" value="<?php echo esc_attr(get_option('amrod_products_endpoint', '/vendor/products')); ?>" style="width:100%;max-width:400px;" placeholder="/vendor/products" /></td></tr>
+                    <tr><th>Categories Endpoint</th><td><input type="text" name="amrod_categories_endpoint" value="<?php echo esc_attr(get_option('amrod_categories_endpoint', '/vendor/categories')); ?>" style="width:100%;max-width:400px;" placeholder="/vendor/categories" /></td></tr>
+                    <tr><th>Colours Endpoint</th><td><input type="text" name="amrod_colours_endpoint" value="<?php echo esc_attr(get_option('amrod_colours_endpoint', '/vendor/colours')); ?>" style="width:100%;max-width:400px;" placeholder="/vendor/colours" /></td></tr>
                     <tr><th>Docs URL</th><td><input type="url" name="amrod_docs_url" value="<?php echo esc_attr(get_option('amrod_docs_url', 'https://newapidocs.amrod.co.za/#ver-2010-summary')); ?>" style="width:100%;max-width:400px;" /></td></tr>
                 </table>
                 <?php submit_button('Save Endpoints'); ?>
@@ -420,6 +429,8 @@ function amrod_get_token() {
 
 // --- Endpoint Helper ---
 function amrod_get_endpoint($token, $endpoint_url, $retries = 2) {
+    amrod_sync_log("Fetching endpoint: {$endpoint_url}");
+    
     for ($attempt = 0; $attempt <= $retries; $attempt++) {
         $response = wp_remote_get($endpoint_url, [
             'headers' => ["Authorization" => "Bearer $token"],
@@ -428,6 +439,7 @@ function amrod_get_endpoint($token, $endpoint_url, $retries = 2) {
 
         if (is_wp_error($response)) {
             $err = $response->get_error_message();
+            amrod_sync_log("Endpoint error (attempt " . ($attempt + 1) . "): {$err}");
             // if final attempt, record error
             if ($attempt === $retries) {
                 update_option('amrod_errors', "Endpoint error: {$err}");
@@ -436,21 +448,31 @@ function amrod_get_endpoint($token, $endpoint_url, $retries = 2) {
         } else {
             $code = wp_remote_retrieve_response_code($response);
             $body = wp_remote_retrieve_body($response);
+            
+            amrod_sync_log("Endpoint responded with HTTP {$code}, body length: " . strlen($body));
 
             if ($code === 200) {
                 $decoded = json_decode($body, true);
                 if (json_last_error() === JSON_ERROR_NONE) {
                     // clear previous errors on success
                     update_option('amrod_errors', '');
+                    amrod_sync_log("Successfully decoded " . count($decoded) . " items from endpoint");
                     return $decoded;
                 }
 
                 // invalid JSON
+                $json_err = json_last_error_msg();
+                amrod_sync_log("Invalid JSON response: {$json_err}");
                 if ($attempt === $retries) {
-                    update_option('amrod_errors', "Invalid JSON from endpoint: " . json_last_error_msg());
+                    update_option('amrod_errors', "Invalid JSON: " . $json_err);
                     return false;
                 }
+            } elseif ($code === 204) {
+                amrod_sync_log("API returned 204 (No Content) - API may be in maintenance mode (00:00-01:00 GMT+2)");
+                update_option('amrod_errors', "Amrod API returned 204 (No Content). Check if maintenance window (00:00-01:00 GMT+2).");
+                return false;
             } else {
+                amrod_sync_log("Endpoint returned HTTP {$code}");
                 if ($attempt === $retries) {
                     update_option('amrod_errors', "Endpoint returned HTTP {$code}");
                     return false;
@@ -459,7 +481,11 @@ function amrod_get_endpoint($token, $endpoint_url, $retries = 2) {
         }
 
         // exponential backoff before retrying
-        sleep((int) pow(2, $attempt));
+        if ($attempt < $retries) {
+            $wait = pow(2, $attempt);
+            amrod_sync_log("Retry attempt " . ($attempt + 2) . " in {$wait} seconds...");
+            sleep($wait);
+        }
     }
 
     return false;
@@ -523,19 +549,18 @@ function amrod_sync_process_batch($offset = 0, $batch_size = 200) {
 
 // Background batch handler using Action Scheduler (if available)
 add_action('amrod_sync_batch', 'amrod_sync_batch_handler');
-function amrod_sync_batch_handler($args = []) {
-    $offset = isset($args['offset']) ? (int) $args['offset'] : 0;
-    $batch_size = isset($args['batch_size']) ? (int) $args['batch_size'] : 200;
-
+function amrod_sync_batch_handler($offset = 0, $batch_size = 200) {
+    $offset = (int) $offset;
+    $batch_size = (int) $batch_size;
+    
     $res = amrod_sync_process_batch($offset, $batch_size);
 
     if ($res['success'] && $res['more']) {
-        $next = ['offset' => $res['next_offset'], 'batch_size' => $batch_size];
         if (function_exists('as_enqueue_async_action')) {
-            as_enqueue_async_action('amrod_sync_batch', $next);
+            as_enqueue_async_action('amrod_sync_batch', [$res['next_offset'], $batch_size]);
         } else {
             // fallback to scheduling a single WP action shortly
-            wp_schedule_single_event(time() + 2, 'amrod_sync_batch', [$next]);
+            wp_schedule_single_event(time() + 2, 'amrod_sync_batch', [$res['next_offset'], $batch_size]);
         }
     }
 }
@@ -546,7 +571,7 @@ function amrod_sync_products($batch_size = 200, $offset = 0) {
     if (function_exists('as_enqueue_async_action')) {
         // reset counters
         update_option('amrod_total_products', 0);
-        as_enqueue_async_action('amrod_sync_batch', ['offset' => 0, 'batch_size' => $batch_size]);
+        as_enqueue_async_action('amrod_sync_batch', [0, $batch_size]);
         amrod_sync_log('Enqueued background sync (Action Scheduler).');
         return true;
     }
@@ -563,7 +588,7 @@ function amrod_sync_products($batch_size = 200, $offset = 0) {
 
     amrod_sync_log("Synchronous sync completed. processed={$processed_total}");
     return true;
-}
+}}
 
 // --- Manual Actions ---
 // Manual POST actions are handled securely by `amrod_handle_post_actions` (nonce + capability checks).
