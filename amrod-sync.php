@@ -652,7 +652,7 @@ function amrod_sync_process_batch($offset = 0, $batch_size = 200) {
     $more = $next_offset < $total;
 
     return ['success' => true, 'processed' => $processed, 'more' => $more, 'next_offset' => $next_offset, 'total' => $total];
-}}
+}
 
 // Background batch handler using Action Scheduler (if available)
 add_action('amrod_sync_batch', 'amrod_sync_batch_handler');
