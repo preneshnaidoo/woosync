@@ -610,15 +610,29 @@ function amrod_sync_products_handler($offset = 0, $batch_size = 200, $token = ''
     }
 
     $total = count($products);
+    
+    // VALIDATION: Check first product to validate data structure (offset=0 only)
+    if ($offset === 0 && !empty($products)) {
+        $first = $products[0];
+        $fields = array_keys($first);
+        amrod_sync_log("Amrod product data structure: [" . implode(", ", array_slice($fields, 0, 5)) . ", ...]");
+        
+        if (!isset($first['ProductCode'])) {
+            amrod_sync_log("❌ CRITICAL: ProductCode field NOT found in Amrod response!");
+            amrod_sync_log("Available fields: " . implode(", ", $fields));
+            return ['processed' => 0, 'total' => $total];
+        }
+    }
+    
     $batch = array_slice($products, $offset, $batch_size);
     $processed = 0;
+    $skipped = 0;
 
     foreach ($batch as $p) {
-        // Diagnostic: Log what we're trying to process
         $product_code = $p['ProductCode'] ?? null;
         
         if (!$product_code) {
-            amrod_sync_log('⚠️ Skipped: missing ProductCode field');
+            $skipped++;
             continue;
         }
 
@@ -626,17 +640,14 @@ function amrod_sync_products_handler($offset = 0, $batch_size = 200, $token = ''
         $name = sanitize_text_field($p['Description'] ?? 'Product');
         $price = isset($p['Price']) ? floatval($p['Price']) : 0;
         
-        amrod_sync_log("Processing: SKU={$sku}, name={$name}, price={$price}");
-
         $existing_id = wc_get_product_id_by_sku($sku);
 
         // Get or CREATE product
         try {
             if ($existing_id) {
                 $wc_product = wc_get_product($existing_id);
-                amrod_sync_log("Found existing product ID: {$existing_id}");
             } else {
-                // CREATE NEW PRODUCT using proper WooCommerce method
+                // CREATE NEW PRODUCT using WC_Product_Simple
                 $wc_product = new WC_Product_Simple();
                 
                 // Set required fields BEFORE saving
@@ -645,43 +656,48 @@ function amrod_sync_products_handler($offset = 0, $batch_size = 200, $token = ''
                 $wc_product->set_status('publish');
                 $wc_product->set_catalog_visibility('visible');
                 $wc_product->set_regular_price($price > 0 ? $price : 0);
-                
-                amrod_sync_log("Created new WC_Product_Simple for SKU: {$sku}");
             }
 
             if (!$wc_product || !is_a($wc_product, 'WC_Product')) {
-                amrod_sync_log("❌ CRITICAL: wc_product is not a valid WC_Product object for SKU: {$sku}");
+                if ($offset === 0 && $processed < 3) {
+                    amrod_sync_log("⚠️ wc_product invalid for SKU: {$sku}");
+                }
+                $skipped++;
                 continue;
             }
 
-            // Update all fields
+            // Update remaining fields
             $wc_product->set_description($p['LongDescription'] ?? '');
             
             if (isset($p['Colour']) && !empty($p['Colour'])) {
                 $wc_product->set_attributes(['colour' => sanitize_text_field($p['Colour'])]);
             }
 
-            // ATTEMPT SAVE with comprehensive error handling
-            try {
-                $product_id = $wc_product->save();
-                
-                if (!$product_id || $product_id === 0) {
-                    amrod_sync_log("❌ save() returned {$product_id} for SKU: {$sku}");
-                    continue;
+            // ATTEMPT SAVE
+            $product_id = $wc_product->save();
+            
+            if (!$product_id || $product_id === 0) {
+                if ($offset === 0 && $processed < 3) {
+                    amrod_sync_log("⚠️ save() returned {$product_id} for SKU: {$sku}");
                 }
-
-                amrod_sync_log("✅ Successfully saved product ID: {$product_id}, SKU: {$sku}");
-                $processed++;
-                
-            } catch (Exception $e) {
-                amrod_sync_log("❌ Exception during save() for SKU {$sku}: " . $e->getMessage());
+                $skipped++;
                 continue;
             }
 
+            $processed++;
+            
         } catch (Exception $e) {
-            amrod_sync_log("❌ Exception processing SKU {$sku}: " . $e->getMessage());
+            if ($offset === 0 && $processed < 3) {
+                amrod_sync_log("⚠️ Exception for SKU {$sku}: " . substr($e->getMessage(), 0, 100));
+            }
+            $skipped++;
             continue;
         }
+    }
+
+    // Summary log
+    if ($skipped > 0 || $processed > 0) {
+        amrod_sync_log("Products batch offset={$offset}: {$processed} saved, {$skipped} skipped");
     }
 
     return ['processed' => $processed, 'total' => $total];
