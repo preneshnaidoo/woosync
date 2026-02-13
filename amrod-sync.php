@@ -695,7 +695,7 @@ function amrod_sync_products($batch_size = 200, $offset = 0) {
 
     amrod_sync_log("Synchronous sync completed. processed={$processed_total}");
     return true;
-}}
+}
 
 // --- Manual Actions ---
 // Manual POST actions are handled securely by `amrod_handle_post_actions` (nonce + capability checks).
