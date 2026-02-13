@@ -64,6 +64,12 @@ function amrod_get_colours_endpoint() {
     $path = get_option('amrod_colours_endpoint', '/api/v2/Colour/ColourSwatch/GetAll');
     return amrod_get_api_url() . $path;
 }
+
+/**
+ * Return the configured Amrod API password.
+ * Priority: Stored option (database) -> environment variable AMROD_API_PASSWORD -> constant AMROD_API_PASSWORD
+ */
+function amrod_get_password() {
     $stored = get_option('amrod_password');
     if ($stored) {
         return $stored;
