@@ -13,12 +13,12 @@ class WooSync_Updater {
     /**
      * GitHub repository API URL
      */
-    const GITHUB_API_URL = 'https://api.github.com/repos/preneshnaidoo/amrod-sync';
+    const GITHUB_API_URL = 'https://api.github.com/repos/preneshnaidoo/woosync';
     
     /**
      * GitHub releases URL (for download links)
      */
-    const GITHUB_RELEASES_URL = 'https://github.com/preneshnaidoo/amrod-sync/releases';
+    const GITHUB_RELEASES_URL = 'https://github.com/preneshnaidoo/woosync/releases';
     
     /**
      * Update check transient name

@@ -20,7 +20,7 @@
 if (!defined('ABSPATH')) exit;
 
 // ===== CONSTANTS & CONFIGURATION =====
-define('WOOSYNC_VERSION', '3.1.0');
+define('WOOSYNC_VERSION', '1.0.0');
 define('WOOSYNC_PATH', plugin_dir_path(__FILE__));
 define('WOOSYNC_URL', plugin_dir_url(__FILE__));
 define('WOOSYNC_ASSETS', WOOSYNC_URL . 'assets/');
@@ -3712,7 +3712,7 @@ function woosync_tab_updates() {
                             🔄 Check for Updates
                         </button>
                         <?php if ($update_available): ?>
-                            <a href="<?php echo esc_url($update_info['url'] ?? 'https://github.com/preneshnaidoo/amrod-sync/releases'); ?>" 
+                            <a href="<?php echo esc_url($update_info['url'] ?? 'https://github.com/preneshnaidoo/woosync/releases'); ?>" 
                                target="_blank" class="btn btn-outline-secondary">
                                 📝 View Release Notes
                             </a>
