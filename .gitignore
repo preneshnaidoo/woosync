@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.sublime-*
+
+# Logs
+*.log
+
+# Backups
+*.bak
+*.backup
+*-backup/
+
+# WordPress
+wp-content/uploads/
+wp-content/cache/
+
+# Local config overrides
+wp-config-local.php
+local-config.php
