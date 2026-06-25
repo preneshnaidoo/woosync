@@ -12,18 +12,18 @@ Domain Path: /languages
 if ( ! defined( 'ABSPATH' ) ) exit;
 
 // ===== CONSTANTS & CONFIGURATION =====
-define('AMROD_SYNC_VERSION', '3.4.1');
-define('AMROD_SYNC_PATH', plugin_dir_path(__FILE__));
-define('AMROD_SYNC_URL', plugin_dir_url(__FILE__));
-define('AMROD_SYNC_ASSETS', AMROD_SYNC_URL . 'assets/');
+define('WOOSYNC_VERSION', '1.0.1');
+define('WOOSYNC_PATH', plugin_dir_path(__FILE__));
+define('WOOSYNC_URL', plugin_dir_url(__FILE__));
+define('WOOSYNC_ASSETS', WOOSYNC_URL . 'assets/');
 // ===== AUTO-UPDATER =====
-require_once AMROD_SYNC_PATH . 'includes/class-woosync-updater.php';
-new WooSync_Updater(AMROD_SYNC_VERSION, plugin_basename(__FILE__), AMROD_SYNC_PATH);
+require_once WOOSYNC_PATH . 'includes/class-woosync-updater.php';
+new WooSync_Updater(WOOSYNC_VERSION, plugin_basename(__FILE__), WOOSYNC_PATH);
 
 
 // ===== WooCommerce Dependency Check =====
-add_action('plugins_loaded', 'amrod_check_woocommerce');
-function amrod_check_woocommerce() {
+add_action('plugins_loaded', 'woosync_check_woocommerce');
+function woosync_check_woocommerce() {
     if (!class_exists('WooCommerce')) {
         add_action('admin_notices', function() {
             echo '<div class="notice notice-error"><p><strong>❌ Amrod Sync:</strong> WooCommerce must be active. Plugin deactivated.</p></div>';
@@ -33,9 +33,9 @@ function amrod_check_woocommerce() {
 }
 
 // ===== ENQUEUE ASSETS =====
-add_action('admin_enqueue_scripts', 'amrod_enqueue_assets');
-function amrod_enqueue_assets($hook) {
-    if (strpos($hook, 'amrod-sync') === false) return;
+add_action('admin_enqueue_scripts', 'woosync_enqueue_assets');
+function woosync_enqueue_assets($hook) {
+    if (strpos($hook, 'woosync') === false) return;
 
     // Bootstrap 5 CSS
     wp_enqueue_style('bootstrap5-css', 'https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css', [], '5.0.2');
@@ -46,52 +46,52 @@ function amrod_enqueue_assets($hook) {
     wp_enqueue_script('chart-js', 'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js', [], '3.9.1', true);
 
     // Custom Admin CSS
-    wp_enqueue_style('amrod-admin-css', AMROD_SYNC_ASSETS . 'css/admin.css', ['bootstrap5-css'], AMROD_SYNC_VERSION);
+    wp_enqueue_style('woosync-admin-css', WOOSYNC_ASSETS . 'css/admin.css', ['bootstrap5-css'], WOOSYNC_VERSION);
 
     // Custom JS
-    wp_enqueue_script('amrod-sync-js', AMROD_SYNC_ASSETS . 'js/sync-progress.js', ['jquery', 'chart-js'], AMROD_SYNC_VERSION, true);
-    wp_enqueue_script('amrod-mapping-js', AMROD_SYNC_ASSETS . 'js/field-mapping.js', ['jquery'], AMROD_SYNC_VERSION, true);
-    wp_enqueue_script('amrod-connect-map-js', AMROD_SYNC_ASSETS . 'js/connect-map.js', ['jquery'], AMROD_SYNC_VERSION, true);
-    wp_enqueue_script('amrod-wizard-js', AMROD_SYNC_ASSETS . 'js/wizard.js', ['jquery', 'bootstrap5-js'], AMROD_SYNC_VERSION, true);
-    wp_localize_script('amrod-wizard-js', 'amrodSyncData', [
+    wp_enqueue_script('woosync-js', WOOSYNC_ASSETS . 'js/sync-progress.js', ['jquery', 'chart-js'], WOOSYNC_VERSION, true);
+    wp_enqueue_script('woosync-mapping-js', WOOSYNC_ASSETS . 'js/field-mapping.js', ['jquery'], WOOSYNC_VERSION, true);
+    wp_enqueue_script('woosync-connect-map-js', WOOSYNC_ASSETS . 'js/connect-map.js', ['jquery'], WOOSYNC_VERSION, true);
+    wp_enqueue_script('woosync-wizard-js', WOOSYNC_ASSETS . 'js/wizard.js', ['jquery', 'bootstrap5-js'], WOOSYNC_VERSION, true);
+    wp_localize_script('woosync-wizard-js', 'woosyncData', [
         'ajaxUrl' => admin_url('admin-ajax.php'),
-        'nonce' => wp_create_nonce('amrod_sync_nonce'),
-        'assetsUrl' => AMROD_SYNC_ASSETS,
-        'isWooSyncPage' => (strpos($hook, 'amrod-sync') !== false),
+        'nonce' => wp_create_nonce('woosync_sync_nonce'),
+        'assetsUrl' => WOOSYNC_ASSETS,
+        'isWooSyncPage' => (strpos($hook, 'woosync') !== false),
         'vendorTemplates' => array_values(amrod_get_vendor_templates()),
         'vendorCredentialSchemas' => amrod_get_vendor_credential_schemas(),
     ]);
 
     // Localize data for JS
-    wp_localize_script('amrod-sync-js', 'amrodSyncData', [
+    wp_localize_script('woosync-js', 'woosyncData', [
         'ajaxUrl' => admin_url('admin-ajax.php'),
-        'nonce' => wp_create_nonce('amrod_sync_nonce'),
-        'assetsUrl' => AMROD_SYNC_ASSETS,
-        'isWooSyncPage' => (strpos($hook, 'amrod-sync') !== false),
+        'nonce' => wp_create_nonce('woosync_sync_nonce'),
+        'assetsUrl' => WOOSYNC_ASSETS,
+        'isWooSyncPage' => (strpos($hook, 'woosync') !== false),
         'vendorTemplates' => array_values(amrod_get_vendor_templates()),
     ]);
 }
 
 // ===== REGISTER SETTINGS =====
-add_action('admin_init', 'amrod_register_settings');
-function amrod_register_settings() {
-    register_setting('amrod_sync_group', 'amrod_username');
-    register_setting('amrod_sync_group', 'amrod_password');
-    register_setting('amrod_sync_group', 'amrod_customer_code');
-    register_setting('amrod_sync_group', 'amrod_auth_url');
-    register_setting('amrod_sync_group', 'amrod_api_url');
-    register_setting('amrod_sync_group', 'amrod_docs_url');
-    register_setting('amrod_sync_group', 'amrod_endpoints');
-    register_setting('amrod_sync_group', 'amrod_field_mapping');
-    register_setting('amrod_sync_group', 'amrod_sync_schedule');
-    register_setting('amrod_sync_group', 'amrod_batch_size');
-    register_setting('amrod_sync_group', 'amrod_auto_update');
-    register_setting('amrod_sync_group', 'woosync_markup_percent');
-    register_setting('amrod_sync_group', 'woosync_vendors');
+add_action('admin_init', 'woosync_register_settings');
+function woosync_register_settings() {
+    register_setting('woosync_sync_group', 'woosync_username');
+    register_setting('woosync_sync_group', 'woosync_password');
+    register_setting('woosync_sync_group', 'woosync_customer_code');
+    register_setting('woosync_sync_group', 'woosync_auth_url');
+    register_setting('woosync_sync_group', 'woosync_api_url');
+    register_setting('woosync_sync_group', 'woosync_docs_url');
+    register_setting('woosync_sync_group', 'woosync_endpoints');
+    register_setting('woosync_sync_group', 'woosync_field_mapping');
+    register_setting('woosync_sync_group', 'woosync_sync_schedule');
+    register_setting('woosync_sync_group', 'woosync_batch_size');
+    register_setting('woosync_sync_group', 'woosync_auto_update');
+    register_setting('woosync_sync_group', 'woosync_markup_percent');
+    register_setting('woosync_sync_group', 'woosync_vendors');
 }
 
 // ===== DEFAULT ENDPOINTS =====
-function amrod_get_default_endpoints() {
+function woosync_get_default_endpoints() {
     return [
         'products' => ['label' => 'Products', 'path' => '/api/v1/Products/', 'enabled' => 1],
         'products_updated' => ['label' => 'Products (Updated)', 'path' => '/api/v1/Products/GetUpdatedProducts', 'enabled' => 0],
@@ -117,7 +117,7 @@ function amrod_get_default_endpoints() {
 }
 
 // ===== AUTO-MAPPING FIELD RULES =====
-function amrod_get_field_mapping_rules() {
+function woosync_get_field_mapping_rules() {
     return [
         'sku' => ['patterns' => ['ProductCode', 'ItemCode', 'SKU', 'ArticeCode', 'ArticleCode', 'ProductId', 'ItemId'], 'confidence' => 100, 'description' => 'Unique product identifier'],
         'name' => ['patterns' => ['Description', 'ProductName', 'Name', 'Title', 'ProductDescription', 'ItemDescription'], 'confidence' => 100, 'description' => 'Product name/title'],
@@ -143,7 +143,7 @@ function amrod_get_field_mapping_rules() {
 
 
 // ===== VENDOR TEMPLATES WITH SUPPORT DATA =====
-function amrod_get_vendor_templates() {
+function woosync_get_vendor_templates() {
     return [
         'amrod' => [
             'id' => 'amrod',
@@ -196,7 +196,7 @@ function amrod_get_vendor_templates() {
 
 // ===== VENDOR CREDENTIAL SCHEMAS =====
 // Defines credential fields and auth types per vendor
-function amrod_get_vendor_credential_schemas() {
+function woosync_get_vendor_credential_schemas() {
     return [
         'amrod' => [
             'auth_type' => 'vendor_login',
@@ -384,7 +384,7 @@ function amrod_get_vendor_credential_schemas() {
 }
 
 // Get credential schema for a specific vendor
-function amrod_get_credential_schema($vendor_id) {
+function woosync_get_credential_schema($vendor_id) {
     $schemas = amrod_get_vendor_credential_schemas();
     return $schemas[$vendor_id] ?? $schemas['custom'];
 }
@@ -392,10 +392,10 @@ function amrod_get_credential_schema($vendor_id) {
 
 
 // ===== SIMPLIFIED TAB STATUS =====
-function amrod_get_simplified_status() {
-    $connected = !empty(get_option('amrod_username')) && !empty(get_option('amrod_password'));
-    $has_mapping = !empty(get_option('amrod_field_mapping'));
-    $last_sync = get_option('amrod_last_sync');
+function woosync_get_simplified_status() {
+    $connected = !empty(get_option('woosync_username')) && !empty(get_option('woosync_password'));
+    $has_mapping = !empty(get_option('woosync_field_mapping'));
+    $last_sync = get_option('woosync_last_sync');
     
     return [
         'connected' => $connected,
@@ -407,8 +407,8 @@ function amrod_get_simplified_status() {
 }
 
 // ===== ADMIN MENU - CLEAN 4-TAB LAYOUT =====
-add_action('admin_menu', 'amrod_register_simplified_menus');
-function amrod_register_simplified_menus() {
+add_action('admin_menu', 'woosync_register_simplified_menus');
+function woosync_register_simplified_menus() {
     if (!class_exists('WooCommerce')) return;
     
     // Main menu: WooSync (Dashboard)
@@ -416,50 +416,50 @@ function amrod_register_simplified_menus() {
         'WooSync',
         'WooSync',
         'manage_options',
-        'amrod-sync',
-        'amrod_render_main_page',
+        'woosync',
+        'woosync_render_main_page',
         'dashicons-update',
         56
     );
 
     // Submenu: Dashboard
     add_submenu_page(
-        'amrod-sync',
+        'woosync',
         'Dashboard',
         '1. Dashboard',
         'manage_options',
-        'amrod-sync',
-        'amrod_render_main_page'
+        'woosync',
+        'woosync_render_main_page'
     );
 
     // Submenu: Connect & Map
     add_submenu_page(
-        'amrod-sync',
+        'woosync',
         'Connect & Map',
         '2. Connect & Map',
         'manage_options',
-        'amrod-sync-connect',
-        'amrod_render_connect_map_page'
+        'woosync-connect',
+        'woosync_render_connect_map_page'
     );
 
     // Submenu: Sync Log
     add_submenu_page(
-        'amrod-sync',
+        'woosync',
         'Sync Log',
         '3. Sync Log',
         'manage_options',
-        'amrod-sync-log',
-        'amrod_render_sync_log_page'
+        'woosync-log',
+        'woosync_render_sync_log_page'
     );
 
     // Submenu: Settings (includes Promotions, Pricing, Promo Share as sub-tabs)
     add_submenu_page(
-        'amrod-sync',
+        'woosync',
         'Settings',
         '4. Settings',
         'manage_options',
-        'amrod-sync-settings',
-        'amrod_render_settings_page'
+        'woosync-settings',
+        'woosync_render_settings_page'
     );
 }
 
@@ -469,13 +469,13 @@ register_activation_hook(__FILE__, function() {
         deactivate_plugins(plugin_basename(__FILE__));
         wp_die('Amrod Sync requires WooCommerce to be active.');
     }
-    set_transient('amrod_activated', 1, HOUR_IN_SECONDS);
+    set_transient('woosync_activated', 1, HOUR_IN_SECONDS);
 });
 
 // ===== ACTIVATION NOTICE =====
 add_action('admin_notices', function() {
-    if (get_transient('amrod_activated')) {
-        delete_transient('amrod_activated');
+    if (get_transient('woosync_activated')) {
+        delete_transient('woosync_activated');
         echo '<div class="alert alert-success alert-dismissible fade show"><strong>✅ WooSync activated!</strong> Setup your API credentials to begin syncing. <a href="#" onclick="window.resetWooSyncWizard(); return false;">Run Setup Wizard</a></div>';
     }
 });
@@ -483,8 +483,8 @@ add_action('admin_notices', function() {
 
 // ===== WIZARD TRIGGER ON ACTIVATION =====
 add_action('admin_init', function() {
-    if (get_transient('amrod_activated')) {
-        delete_transient('amrod_activated');
+    if (get_transient('woosync_activated')) {
+        delete_transient('woosync_activated');
         // Trigger wizard JS event
         add_action('admin_footer', function() {
             echo '<script>jQuery(document).ready(function(){ jQuery(document).trigger("woosync_activate_wizard"); });</script>';
@@ -494,9 +494,9 @@ add_action('admin_init', function() {
 
 
 // ===== BREADCRUMB HELPER =====
-function amrod_breadcrumb($items) {
+function woosync_breadcrumb($items) {
     echo '<nav aria-label="breadcrumb"><ol class="breadcrumb mb-3">';
-    echo '<li class="breadcrumb-item"><a href="?page=amrod-sync">WooSync</a></li>';
+    echo '<li class="breadcrumb-item"><a href="?page=woosync-sync">WooSync</a></li>';
     foreach ($items as $label => $url) {
         if ($url === false) {
             echo '<li class="breadcrumb-item active" aria-current="page">' . esc_html($label) . '</li>';
@@ -508,14 +508,14 @@ function amrod_breadcrumb($items) {
 }
 
 // ===== MAIN PAGE RENDERER (handles all pages) =====
-function amrod_render_main_page() {
-    $page = $_GET['page'] ?? 'amrod-sync';
+function woosync_render_main_page() {
+    $page = $_GET['page'] ?? 'woosync';
     $status = amrod_get_simplified_status();
-    $last_sync = get_option('amrod_last_sync');
-    $total_products = get_option('amrod_total_products', 0);
-    $last_token_time = get_option('amrod_last_token_fetched');
-    $batch_size = get_option('amrod_batch_size', 200);
-    $auto_update = get_option('amrod_auto_update', 1);
+    $last_sync = get_option('woosync_last_sync');
+    $total_products = get_option('woosync_total_products', 0);
+    $last_token_time = get_option('woosync_last_token_fetched');
+    $batch_size = get_option('woosync_batch_size', 200);
+    $auto_update = get_option('woosync_auto_update', 1);
     ?>
     <div class="container-fluid mt-4 amrod-container">
         <?php amrod_breadcrumb(['Dashboard' => false]); ?>
@@ -524,9 +524,9 @@ function amrod_render_main_page() {
         <div class="d-flex justify-content-between align-items-center mb-4">
             <div>
                 <h1 class="mb-0">📊 Dashboard</h1>
-                <small class="text-muted">WooSync v<?php echo AMROD_SYNC_VERSION; ?></small>
+                <small class="text-muted">WooSync v<?php echo WOOSYNC_VERSION; ?></small>
             </div>
-            <img src="<?php echo AMROD_SYNC_ASSETS; ?>images/mediaplatform-logo.svg" height="18" alt="Mediaplatform">
+            <img src="<?php echo WOOSYNC_ASSETS; ?>images/mediaplatform-logo.svg" height="18" alt="Mediaplatform">
         </div>
 
         <!-- Quick Stats Cards -->
@@ -537,7 +537,7 @@ function amrod_render_main_page() {
                         <div class="status-dot <?php echo $status['connection_status']; ?> mb-2"></div>
                         <h5 class="card-title">API Connection</h5>
                         <p class="card-text text-muted small"><?php echo $status['connected'] ? 'Connected to Amrod' : 'Not configured'; ?></p>
-                        <a href="?page=amrod-sync-settings" class="btn btn-sm btn-outline-primary">Configure</a>
+                        <a href="?page=woosync-sync-settings" class="btn btn-sm btn-outline-primary">Configure</a>
                     </div>
                 </div>
             </div>
@@ -561,7 +561,7 @@ function amrod_render_main_page() {
             <div class="col-md-3">
                 <div class="card h-100">
                     <div class="card-body text-center">
-                        <h5 class="card-title"><?php echo number_format(get_option('amrod_mapped_fields', 0)); ?></h5>
+                        <h5 class="card-title"><?php echo number_format(get_option('woosync_mapped_fields', 0)); ?></h5>
                         <p class="card-text text-muted small">Fields Mapped</p>
                     </div>
                 </div>
@@ -577,7 +577,7 @@ function amrod_render_main_page() {
                     </div>
                     <div class="card-body">
                         <form method="post" id="quickSyncForm">
-                            <?php wp_nonce_field('amrod_sync_nonce'); ?>
+                            <?php wp_nonce_field('woosync_sync_nonce'); ?>
                             <div class="row align-items-end">
                                 <div class="col-md-4">
                                     <label class="form-label">Batch Size <span class="help-icon" data-bs-toggle="tooltip" title="Number of products to sync per batch. Recommended: 200">?</span></label>
@@ -644,12 +644,12 @@ function amrod_render_main_page() {
         <div class="card">
             <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
                 <h5 class="mb-0">📋 Recent Activity</h5>
-                <a href="?page=amrod-sync-log" class="btn btn-sm btn-light">View All Logs →</a>
+                <a href="?page=woosync-sync-log" class="btn btn-sm btn-light">View All Logs →</a>
             </div>
             <div class="card-body" style="max-height: 300px; overflow-y: auto;">
                 <div id="syncLog">
                     <?php
-                    $log = array_reverse((array) get_option('amrod_sync_log', []));
+                    $log = array_reverse((array) get_option('woosync_sync_log', []));
                     if (empty($log)) {
                         echo '<p class="text-muted mb-0">No activity yet. Start a sync to see logs here.</p>';
                     } else {
@@ -670,13 +670,13 @@ function amrod_render_main_page() {
 }
 
 // ===== CONNECT & MAP PAGE =====
-function amrod_render_connect_map_page() {
+function woosync_render_connect_map_page() {
     $status = amrod_get_simplified_status();
-    $mapping = get_option('amrod_field_mapping', []);
+    $mapping = get_option('woosync_field_mapping', []);
     $endpoints = amrod_get_endpoints();
     ?>
     <div class="container-fluid mt-4 amrod-container">
-        <?php amrod_breadcrumb(['Dashboard' => '?page=amrod-sync', 'Connect & Map' => false]); ?>
+        <?php amrod_breadcrumb(['Dashboard' => '?page=woosync-sync', 'Connect & Map' => false]); ?>
         
         <!-- Header -->
         <div class="d-flex justify-content-between align-items-center mb-4">
@@ -742,11 +742,11 @@ function amrod_render_connect_map_page() {
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label">Vendor / Customer Code <span class="help-icon" data-bs-toggle="tooltip" title="Your Amrod customer code">?</span></label>
-                            <input type="text" id="vendorCode" value="<?php echo esc_attr(get_option('amrod_customer_code', '')); ?>" class="form-control" placeholder="e.g., MEDIAPLATFORM">
+                            <input type="text" id="vendorCode" value="<?php echo esc_attr(get_option('woosync_customer_code', '')); ?>" class="form-control" placeholder="e.g., MEDIAPLATFORM">
                         </div>
                         <div class="mb-3">
                             <label class="form-label">API Username <span class="help-icon" data-bs-toggle="tooltip" title="Your Amrod API username">?</span></label>
-                            <input type="text" id="apiUsername" value="<?php echo esc_attr(get_option('amrod_username', '')); ?>" class="form-control" placeholder="username@email.com">
+                            <input type="text" id="apiUsername" value="<?php echo esc_attr(get_option('woosync_username', '')); ?>" class="form-control" placeholder="username@email.com">
                         </div>
                         <div class="mb-3">
                             <label class="form-label">API Password <span class="help-icon" data-bs-toggle="tooltip" title="Your Amrod API password">?</span></label>
@@ -921,8 +921,8 @@ function amrod_render_connect_map_page() {
 }
 
 // ===== RENDER MAPPING TAB HELPER =====
-function amrod_render_mapping_tab($category, $fields) {
-    $mapping = get_option('amrod_field_mapping', []);
+function woosync_render_mapping_tab($category, $fields) {
+    $mapping = get_option('woosync_field_mapping', []);
     $wc_fields = [
         'sku' => 'SKU',
         'name' => 'Product Name',
@@ -974,15 +974,15 @@ function amrod_render_mapping_tab($category, $fields) {
 }
 
 // ===== SYNC LOG PAGE =====
-function amrod_render_sync_log_page() {
-    $log = array_reverse((array) get_option('amrod_sync_log', []));
-    $last_sync = get_option('amrod_last_sync');
-    $total_products = get_option('amrod_total_products', 0);
+function woosync_render_sync_log_page() {
+    $log = array_reverse((array) get_option('woosync_sync_log', []));
+    $last_sync = get_option('woosync_last_sync');
+    $total_products = get_option('woosync_total_products', 0);
     $vendor_tier = amrod_get_vendor_tier('amrod');
     $tier = $vendor_tier['tier'] ?? 'Standard';
     ?>
     <div class="container-fluid mt-4 amrod-container">
-        <?php amrod_breadcrumb(['Dashboard' => '?page=amrod-sync', 'Sync Log' => false]); ?>
+        <?php amrod_breadcrumb(['Dashboard' => '?page=woosync-sync', 'Sync Log' => false]); ?>
         
         <!-- Header -->
         <div class="d-flex justify-content-between align-items-center mb-4">
@@ -991,7 +991,7 @@ function amrod_render_sync_log_page() {
                 <small class="text-muted">History, errors, and sync activity</small>
             </div>
             <form method="post" class="d-inline">
-                <?php wp_nonce_field('amrod_sync_nonce'); ?>
+                <?php wp_nonce_field('woosync_sync_nonce'); ?>
                 <button type="submit" name="clear_log" class="btn btn-outline-danger btn-sm">🗑️ Clear Log</button>
             </form>
         </div>
@@ -1133,10 +1133,10 @@ function amrod_render_sync_log_page() {
 }
 
 // ===== PROMOTIONS PAGE =====
-function amrod_render_promotions_page() {
+function woosync_render_promotions_page() {
     ?>
     <div class="container-fluid mt-4 amrod-container">
-        <?php amrod_breadcrumb(['Dashboard' => '?page=amrod-sync', 'Promotions' => false]); ?>
+        <?php amrod_breadcrumb(['Dashboard' => '?page=woosync-sync', 'Promotions' => false]); ?>
         
         <!-- Header -->
         <div class="d-flex justify-content-between align-items-center mb-4">
@@ -1258,18 +1258,18 @@ function amrod_render_promotions_page() {
 }
 
 // ===== SETTINGS PAGE (Merged Settings + Updates) =====
-function amrod_render_settings_page() {
-    $username = get_option('amrod_username');
-    $password = !empty(get_option('amrod_password'));
-    $customer_code = get_option('amrod_customer_code');
-    $auth_url = get_option('amrod_auth_url', 'https://identity.amrod.co.za');
-    $api_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za');
-    $auto_update = get_option('amrod_auto_update', 1);
-    $batch_size = get_option('amrod_batch_size', 200);
+function woosync_render_settings_page() {
+    $username = get_option('woosync_username');
+    $password = !empty(get_option('woosync_password'));
+    $customer_code = get_option('woosync_customer_code');
+    $auth_url = get_option('woosync_auth_url', 'https://identity.amrod.co.za');
+    $api_url = get_option('woosync_api_url', 'https://vendorapi.amrod.co.za');
+    $auto_update = get_option('woosync_auto_update', 1);
+    $batch_size = get_option('woosync_batch_size', 200);
     $endpoints = amrod_get_endpoints();
     ?>
     <div class="container-fluid mt-4 amrod-container">
-        <?php amrod_breadcrumb(['Dashboard' => '?page=amrod-sync', 'Settings' => false]); ?>
+        <?php amrod_breadcrumb(['Dashboard' => '?page=woosync-sync', 'Settings' => false]); ?>
         
         <!-- Header -->
         <div class="d-flex justify-content-between align-items-center mb-4">
@@ -1288,20 +1288,20 @@ function amrod_render_settings_page() {
                     </div>
                     <div class="card-body">
                         <form method="post" id="settingsForm">
-                            <?php wp_nonce_field('amrod_sync_nonce'); ?>
+                            <?php wp_nonce_field('woosync_sync_nonce'); ?>
                             
                             <div class="mb-3">
                                 <label class="form-label">Customer Code <span class="help-icon" data-bs-toggle="tooltip" title="Your Amrod customer/account code">?</span></label>
-                                <input type="text" name="amrod_customer_code" value="<?php echo esc_attr($customer_code); ?>" class="form-control" placeholder="MEDIAPLATFORM">
+                                <input type="text" name="woosync_customer_code" value="<?php echo esc_attr($customer_code); ?>" class="form-control" placeholder="MEDIAPLATFORM">
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">Username <span class="help-icon" data-bs-toggle="tooltip" title="Amrod API username">?</span></label>
-                                <input type="text" name="amrod_username" value="<?php echo esc_attr($username); ?>" class="form-control" placeholder="user@email.com">
+                                <input type="text" name="woosync_username" value="<?php echo esc_attr($username); ?>" class="form-control" placeholder="user@email.com">
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">Password <span class="help-icon" data-bs-toggle="tooltip" title="Amrod API password">?</span></label>
                                 <div class="input-group">
-                                    <input type="password" name="amrod_password" id="passwordField" class="form-control" placeholder="••••••••">
+                                    <input type="password" name="woosync_password" id="passwordField" class="form-control" placeholder="••••••••">
                                     <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility()">👁</button>
                                 </div>
                                 <?php if ($password): ?>
@@ -1312,11 +1312,11 @@ function amrod_render_settings_page() {
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">Auth URL <span class="help-icon" data-bs-toggle="tooltip" title="Amrod identity/authentication endpoint">?</span></label>
-                                <input type="url" name="amrod_auth_url" value="<?php echo esc_attr($auth_url); ?>" class="form-control">
+                                <input type="url" name="woosync_auth_url" value="<?php echo esc_attr($auth_url); ?>" class="form-control">
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">API URL <span class="help-icon" data-bs-toggle="tooltip" title="Amrod vendor API base URL">?</span></label>
-                                <input type="url" name="amrod_api_url" value="<?php echo esc_attr($api_url); ?>" class="form-control">
+                                <input type="url" name="woosync_api_url" value="<?php echo esc_attr($api_url); ?>" class="form-control">
                             </div>
                             <button type="submit" name="save_credentials" class="btn btn-success w-100">💾 Save Credentials</button>
                         </form>
@@ -1333,12 +1333,12 @@ function amrod_render_settings_page() {
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label">Batch Size <span class="help-icon" data-bs-toggle="tooltip" title="Number of products to process per batch">?</span></label>
-                            <input type="number" name="amrod_batch_size" value="<?php echo $batch_size; ?>" min="50" max="500" class="form-control">
+                            <input type="number" name="woosync_batch_size" value="<?php echo $batch_size; ?>" min="50" max="500" class="form-control">
                             <small class="text-muted">Recommended: 200</small>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Sync Schedule <span class="help-icon" data-bs-toggle="tooltip" title="How often to automatically sync">?</span></label>
-                            <select name="amrod_sync_schedule" class="form-select">
+                            <select name="woosync_sync_schedule" class="form-select">
                                 <option value="manual">Manual Only</option>
                                 <option value="hourly">Every Hour</option>
                                 <option value="6hours">Every 6 Hours</option>
@@ -1349,7 +1349,7 @@ function amrod_render_settings_page() {
                         <div class="mb-3">
                             <label class="form-label">Auto-Update Toggle <span class="help-icon" data-bs-toggle="tooltip" title="Enable/disable automatic plugin updates">?</span></label>
                             <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" name="amrod_auto_update" value="1" <?php checked($auto_update); ?>>
+                                <input class="form-check-input" type="checkbox" name="woosync_auto_update" value="1" <?php checked($auto_update); ?>>
                                 <label class="form-check-label">Enable Auto-Updates</label>
                             </div>
                         </div>
@@ -1481,7 +1481,7 @@ function amrod_render_settings_page() {
             <div class="card-body">
                 <div class="row">
                     <div class="col-md-4">
-                        <p class="mb-1"><strong>Version:</strong> <?php echo AMROD_SYNC_VERSION; ?></p>
+                        <p class="mb-1"><strong>Version:</strong> <?php echo WOOSYNC_VERSION; ?></p>
                         <p class="mb-1"><strong>Author:</strong> Mediaplatform</p>
                         <p class="mb-1"><strong>Website:</strong> <a href="https://mediaplatform.co.za" target="_blank">mediaplatform.co.za</a></p>
                     </div>
@@ -1491,8 +1491,8 @@ function amrod_render_settings_page() {
                         <p class="mb-1"><strong>WordPress:</strong> <?php global $wp_version; echo $wp_version; ?></p>
                     </div>
                     <div class="col-md-4">
-                        <p class="mb-1"><strong>Last Sync:</strong> <?php echo get_option('amrod_last_sync') ?: 'Never'; ?></p>
-                        <p class="mb-1"><strong>Total Products:</strong> <?php echo number_format(get_option('amrod_total_products', 0)); ?></p>
+                        <p class="mb-1"><strong>Last Sync:</strong> <?php echo get_option('woosync_last_sync') ?: 'Never'; ?></p>
+                        <p class="mb-1"><strong>Total Products:</strong> <?php echo number_format(get_option('woosync_total_products', 0)); ?></p>
                         <p class="mb-1"><strong>API Endpoints:</strong> <?php echo count(array_filter($endpoints, fn($e) => $e['enabled'])); ?> enabled</p>
                     </div>
                 </div>
@@ -1501,7 +1501,7 @@ function amrod_render_settings_page() {
                     <a href="https://mediaplatform.co.za/support" target="_blank" class="btn btn-outline-primary">📖 Documentation</a>
                     <a href="https://mediaplatform.co.za/support" target="_blank" class="btn btn-outline-secondary">💬 Get Support</a>
                     <form method="post" class="d-inline ms-auto">
-                        <?php wp_nonce_field('amrod_sync_nonce'); ?>
+                        <?php wp_nonce_field('woosync_sync_nonce'); ?>
                         <button type="submit" name="reset_all" class="btn btn-outline-danger" onclick="return confirm('Are you sure? This will clear all settings and logs.');">🗑️ Reset Plugin</button>
                     </form>
                 </div>
@@ -1515,34 +1515,34 @@ function amrod_render_settings_page() {
 add_action('admin_init', function() {
     if (empty($_POST)) return;
     if (!current_user_can('manage_options')) return;
-    if (!wp_verify_nonce($_POST['_wpnonce'] ?? '', 'amrod_sync_nonce')) return;
+    if (!wp_verify_nonce($_POST['_wpnonce'] ?? '', 'woosync_sync_nonce')) return;
 
     if (isset($_POST['save_credentials'])) {
-        update_option('amrod_username', sanitize_text_field($_POST['amrod_username'] ?? ''));
-        update_option('amrod_password', sanitize_text_field($_POST['amrod_password'] ?? ''));
-        update_option('amrod_customer_code', sanitize_text_field($_POST['amrod_customer_code'] ?? ''));
-        update_option('amrod_auth_url', esc_url_raw($_POST['amrod_auth_url'] ?? 'https://identity.amrod.co.za'));
-        update_option('amrod_api_url', esc_url_raw($_POST['amrod_api_url'] ?? 'https://vendorapi.amrod.co.za'));
+        update_option('woosync_username', sanitize_text_field($_POST['woosync_username'] ?? ''));
+        update_option('woosync_password', sanitize_text_field($_POST['woosync_password'] ?? ''));
+        update_option('woosync_customer_code', sanitize_text_field($_POST['woosync_customer_code'] ?? ''));
+        update_option('woosync_auth_url', esc_url_raw($_POST['woosync_auth_url'] ?? 'https://identity.amrod.co.za'));
+        update_option('woosync_api_url', esc_url_raw($_POST['woosync_api_url'] ?? 'https://vendorapi.amrod.co.za'));
         wp_safe_redirect(add_query_arg('updated', '1'));
         exit;
     }
 
     if (isset($_POST['save_settings'])) {
-        update_option('amrod_batch_size', intval($_POST['amrod_batch_size'] ?? 200));
-        update_option('amrod_sync_schedule', sanitize_text_field($_POST['amrod_sync_schedule'] ?? 'manual'));
-        update_option('amrod_auto_update', isset($_POST['amrod_auto_update']) ? 1 : 0);
+        update_option('woosync_batch_size', intval($_POST['woosync_batch_size'] ?? 200));
+        update_option('woosync_sync_schedule', sanitize_text_field($_POST['woosync_sync_schedule'] ?? 'manual'));
+        update_option('woosync_auto_update', isset($_POST['woosync_auto_update']) ? 1 : 0);
         wp_safe_redirect(add_query_arg('updated', '1'));
         exit;
     }
 
     if (isset($_POST['clear_log'])) {
-        delete_option('amrod_sync_log');
+        delete_option('woosync_sync_log');
         wp_safe_redirect(add_query_arg('cleared', '1'));
         exit;
     }
 
     if (isset($_POST['reset_all'])) {
-        $options = ['amrod_username', 'amrod_password', 'amrod_customer_code', 'amrod_auth_url', 'amrod_api_url', 'amrod_docs_url', 'amrod_endpoints', 'amrod_field_mapping', 'amrod_sync_log', 'amrod_last_sync', 'amrod_total_products', 'amrod_last_token_fetched', 'amrod_sync_schedule', 'amrod_batch_size', 'amrod_auto_update', 'amrod_mapped_fields'];
+        $options = ['woosync_username', 'woosync_password', 'woosync_customer_code', 'woosync_auth_url', 'woosync_api_url', 'woosync_docs_url', 'woosync_endpoints', 'woosync_field_mapping', 'woosync_sync_log', 'woosync_last_sync', 'woosync_total_products', 'woosync_last_token_fetched', 'woosync_sync_schedule', 'woosync_batch_size', 'woosync_auto_update', 'woosync_mapped_fields'];
         foreach ($options as $opt) delete_option($opt);
         wp_safe_redirect(add_query_arg('reset', '1'));
         exit;
@@ -1551,7 +1551,7 @@ add_action('admin_init', function() {
 
 // ===== UNINSTALL =====
 register_uninstall_hook(__FILE__, function() {
-    $options = ['amrod_username', 'amrod_password', 'amrod_customer_code', 'amrod_auth_url', 'amrod_api_url', 'amrod_docs_url', 'amrod_endpoints', 'amrod_field_mapping', 'amrod_sync_log', 'amrod_last_sync', 'amrod_total_products', 'amrod_last_token_fetched', 'amrod_sync_schedule', 'amrod_batch_size', 'amrod_auto_update', 'amrod_mapped_fields'];
+    $options = ['woosync_username', 'woosync_password', 'woosync_customer_code', 'woosync_auth_url', 'woosync_api_url', 'woosync_docs_url', 'woosync_endpoints', 'woosync_field_mapping', 'woosync_sync_log', 'woosync_last_sync', 'woosync_total_products', 'woosync_last_token_fetched', 'woosync_sync_schedule', 'woosync_batch_size', 'woosync_auto_update', 'woosync_mapped_fields'];
     foreach ($options as $opt) delete_option($opt);
 });
 
@@ -1559,9 +1559,9 @@ register_uninstall_hook(__FILE__, function() {
 
 // Test Connection AJAX
 // Get credential schema for a vendor (AJAX)
-add_action('wp_ajax_amrod_get_credential_schema', 'amrod_ajax_get_credential_schema');
-function amrod_ajax_get_credential_schema() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_get_credential_schema', 'woosync_ajax_get_credential_schema');
+function woosync_ajax_get_credential_schema() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? 'amrod');
@@ -1574,9 +1574,9 @@ function amrod_ajax_get_credential_schema() {
 }
 
 // Test Connection AJAX (handles all vendor types)
-add_action('wp_ajax_amrod_test_connection', 'amrod_ajax_test_connection');
-function amrod_ajax_test_connection() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_test_connection', 'woosync_ajax_test_connection');
+function woosync_ajax_test_connection() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? 'amrod');
@@ -1688,9 +1688,9 @@ function amrod_ajax_test_connection() {
 
 
 // Save Credentials Simple AJAX (used by wizard - handles all vendor types)
-add_action('wp_ajax_amrod_save_credentials_simple', 'amrod_ajax_save_credentials_simple');
-function amrod_ajax_save_credentials_simple() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_save_credentials_simple', 'woosync_ajax_save_credentials_simple');
+function woosync_ajax_save_credentials_simple() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? 'amrod');
@@ -1746,11 +1746,11 @@ function amrod_ajax_save_credentials_simple() {
     
     // Also update legacy options for Amrod (for backward compatibility)
     if ($vendor_id === 'amrod') {
-        if (!empty($posted_fields['username'])) update_option('amrod_username', sanitize_text_field($posted_fields['username']));
-        if (!empty($posted_fields['password'])) update_option('amrod_password', sanitize_text_field($posted_fields['password']));
-        if (!empty($posted_fields['customer_code'])) update_option('amrod_customer_code', sanitize_text_field($posted_fields['customer_code']));
-        if (!empty($posted_fields['auth_url'])) update_option('amrod_auth_url', esc_url_raw($posted_fields['auth_url']));
-        if (!empty($posted_fields['api_base_url'])) update_option('amrod_api_url', esc_url_raw($posted_fields['api_base_url']));
+        if (!empty($posted_fields['username'])) update_option('woosync_username', sanitize_text_field($posted_fields['username']));
+        if (!empty($posted_fields['password'])) update_option('woosync_password', sanitize_text_field($posted_fields['password']));
+        if (!empty($posted_fields['customer_code'])) update_option('woosync_customer_code', sanitize_text_field($posted_fields['customer_code']));
+        if (!empty($posted_fields['auth_url'])) update_option('woosync_auth_url', esc_url_raw($posted_fields['auth_url']));
+        if (!empty($posted_fields['api_base_url'])) update_option('woosync_api_url', esc_url_raw($posted_fields['api_base_url']));
     }
     
     // Store vendor in vendors list
@@ -1768,37 +1768,37 @@ function amrod_ajax_save_credentials_simple() {
 
 
 // Fetch Token AJAX
-add_action('wp_ajax_amrod_fetch_token', 'amrod_ajax_fetch_token');
-function amrod_ajax_fetch_token() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_fetch_token', 'woosync_ajax_fetch_token');
+function woosync_ajax_fetch_token() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $token = amrod_get_token();
     if ($token) {
-        update_option('amrod_last_token_fetched', current_time('mysql'));
-        wp_send_json_success(['token' => amrod_mask_token_for_display($token)]);
+        update_option('woosync_last_token_fetched', current_time('mysql'));
+        wp_send_json_success(['token' => woosync_mask_token_for_display($token)]);
     } else {
         wp_send_json_error('Failed to fetch token');
     }
 }
 
 // Sync Batch AJAX
-add_action('wp_ajax_amrod_sync_batch', 'amrod_ajax_sync_batch');
-function amrod_ajax_sync_batch() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_sync_batch', 'woosync_ajax_sync_batch');
+function woosync_ajax_sync_batch() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $offset = intval($_POST['offset'] ?? 0);
     $batch_size = intval($_POST['batch_size'] ?? 200);
     
-    $result = amrod_sync_process_batch($offset, $batch_size);
+    $result = woosync_sync_process_batch($offset, $batch_size);
     wp_send_json_success($result);
 }
 
 // Search Products AJAX (with fuzzy matching)
-add_action('wp_ajax_amrod_search_products', 'amrod_ajax_search_products');
-function amrod_ajax_search_products() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_search_products', 'woosync_ajax_search_products');
+function woosync_ajax_search_products() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $query = sanitize_text_field($_POST['query'] ?? '');
@@ -1815,7 +1815,7 @@ function amrod_ajax_search_products() {
         wp_send_json_error('Products endpoint not enabled');
     }
 
-    $products_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
+    $products_url = get_option('woosync_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
     $products = amrod_get_endpoint($token, $products_url);
     
     if ($products === false || !is_array($products)) {
@@ -1874,9 +1874,9 @@ function amrod_ajax_search_products() {
 }
 
 // Get Product Preview AJAX
-add_action('wp_ajax_amrod_get_product_preview', 'amrod_ajax_get_product_preview');
-function amrod_ajax_get_product_preview() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_get_product_preview', 'woosync_ajax_get_product_preview');
+function woosync_ajax_get_product_preview() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $product_code = sanitize_text_field($_POST['product_code'] ?? '');
@@ -1893,7 +1893,7 @@ function amrod_ajax_get_product_preview() {
         wp_send_json_error('Products endpoint not enabled');
     }
 
-    $products_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
+    $products_url = get_option('woosync_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
     $products = amrod_get_endpoint($token, $products_url);
     
     if ($products === false || !is_array($products)) {
@@ -1903,7 +1903,7 @@ function amrod_ajax_get_product_preview() {
     // Find the product
     foreach ($products as $product) {
         if (($product['ProductCode'] ?? '') === $product_code) {
-            $mapping = get_option('amrod_field_mapping', []);
+            $mapping = get_option('woosync_field_mapping', []);
             $preview = amrod_generate_preview($product, $mapping);
             wp_send_json_success($preview);
         }
@@ -1913,9 +1913,9 @@ function amrod_ajax_get_product_preview() {
 }
 
 // Auto-detect fields AJAX
-add_action('wp_ajax_amrod_auto_detect_fields', 'amrod_ajax_auto_detect_fields');
-function amrod_ajax_auto_detect_fields() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_auto_detect_fields', 'woosync_ajax_auto_detect_fields');
+function woosync_ajax_auto_detect_fields() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $token = amrod_get_token();
@@ -1930,7 +1930,7 @@ function amrod_ajax_auto_detect_fields() {
         wp_send_json_error('Products endpoint not enabled');
     }
 
-    $products_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
+    $products_url = get_option('woosync_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
     $products = amrod_get_endpoint($token, $products_url);
     
     if ($products === false || !is_array($products) || empty($products)) {
@@ -1960,22 +1960,22 @@ function amrod_ajax_auto_detect_fields() {
 }
 
 // Save field mapping AJAX
-add_action('wp_ajax_amrod_save_field_mapping', 'amrod_ajax_save_field_mapping');
-function amrod_ajax_save_field_mapping() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_save_field_mapping', 'woosync_ajax_save_field_mapping');
+function woosync_ajax_save_field_mapping() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $mapping = $_POST['mapping'] ?? [];
-    update_option('amrod_field_mapping', $mapping);
-    update_option('amrod_mapped_fields', count(array_filter($mapping)));
+    update_option('woosync_field_mapping', $mapping);
+    update_option('woosync_mapped_fields', count(array_filter($mapping)));
     
     wp_send_json_success(['message' => 'Field mapping saved successfully']);
 }
 
 // Save endpoint AJAX
-add_action('wp_ajax_amrod_save_endpoint', 'amrod_ajax_save_endpoint');
-function amrod_ajax_save_endpoint() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_save_endpoint', 'woosync_ajax_save_endpoint');
+function woosync_ajax_save_endpoint() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $endpoint_key = sanitize_text_field($_POST['endpoint'] ?? '');
@@ -1992,9 +1992,9 @@ function amrod_ajax_save_endpoint() {
 }
 
 // Refresh Tier Status AJAX
-add_action('wp_ajax_amrod_refresh_tier_status', 'amrod_ajax_refresh_tier_status');
-function amrod_ajax_refresh_tier_status() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_refresh_tier_status', 'woosync_ajax_refresh_tier_status');
+function woosync_ajax_refresh_tier_status() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? 'amrod');
@@ -2004,11 +2004,11 @@ function amrod_ajax_refresh_tier_status() {
         wp_send_json_error('Failed to obtain token');
     }
     
-    $auth_url = get_option('amrod_auth_url', 'https://identity.amrod.co.za') . '/VendorLogin';
+    $auth_url = get_option('woosync_auth_url', 'https://identity.amrod.co.za') . '/VendorLogin';
     $payload = json_encode([
-        'username' => get_option('amrod_username'),
+        'username' => get_option('woosync_username'),
         'password' => amrod_get_password(),
-        'CustomerCode' => get_option('amrod_customer_code')
+        'CustomerCode' => get_option('woosync_customer_code')
     ]);
 
     $response = wp_remote_post($auth_url, [
@@ -2060,9 +2060,9 @@ function amrod_ajax_refresh_tier_status() {
 }
 
 // Save Tier Settings AJAX
-add_action('wp_ajax_amrod_save_tier_settings', 'amrod_ajax_save_tier_settings');
-function amrod_ajax_save_tier_settings() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_save_tier_settings', 'woosync_ajax_save_tier_settings');
+function woosync_ajax_save_tier_settings() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? 'amrod');
@@ -2086,9 +2086,9 @@ function amrod_ajax_save_tier_settings() {
 }
 
 // Get Tier Savings AJAX
-add_action('wp_ajax_amrod_get_tier_savings', 'amrod_ajax_get_tier_savings');
-function amrod_ajax_get_tier_savings() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_get_tier_savings', 'woosync_ajax_get_tier_savings');
+function woosync_ajax_get_tier_savings() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $vendor_tier = amrod_get_vendor_tier('amrod');
@@ -2116,7 +2116,7 @@ function amrod_ajax_get_tier_savings() {
         wp_send_json_error('Products endpoint not enabled');
     }
     
-    $api_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za');
+    $api_url = get_option('woosync_api_url', 'https://vendorapi.amrod.co.za');
     
     $products_url = $api_url . $products_ep['path'];
     $products = amrod_get_endpoint($token, $products_url);
@@ -2139,7 +2139,7 @@ function amrod_ajax_get_tier_savings() {
     
     $savings = [];
     $total_savings = 0;
-    $mapping = get_option('amrod_field_mapping', []);
+    $mapping = get_option('woosync_field_mapping', []);
     
     foreach ($products as $product) {
         $code = $product[$mapping['sku'] ?? 'ProductCode'] ?? '';
@@ -2175,9 +2175,9 @@ function amrod_ajax_get_tier_savings() {
 }
 
 // Get Product Preview with Tier AJAX
-add_action('wp_ajax_amrod_get_product_preview_tier', 'amrod_ajax_get_product_preview_tier');
-function amrod_ajax_get_product_preview_tier() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_get_product_preview_tier', 'woosync_ajax_get_product_preview_tier');
+function woosync_ajax_get_product_preview_tier() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $product_code = sanitize_text_field($_POST['product_code'] ?? '');
@@ -2194,7 +2194,7 @@ function amrod_ajax_get_product_preview_tier() {
         wp_send_json_error('Products endpoint not enabled');
     }
 
-    $products_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
+    $products_url = get_option('woosync_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
     $products = amrod_get_endpoint($token, $products_url);
     
     if ($products === false || !is_array($products)) {
@@ -2203,7 +2203,7 @@ function amrod_ajax_get_product_preview_tier() {
 
     foreach ($products as $product) {
         if (($product['ProductCode'] ?? '') === $product_code) {
-            $mapping = get_option('amrod_field_mapping', []);
+            $mapping = get_option('woosync_field_mapping', []);
             $vendor_tier = amrod_get_vendor_tier('amrod');
             $preview = amrod_generate_preview_with_tier($product, $mapping, $vendor_tier);
             wp_send_json_success($preview);
@@ -2214,9 +2214,9 @@ function amrod_ajax_get_product_preview_tier() {
 }
 
 // Sync single product AJAX
-add_action('wp_ajax_amrod_sync_single_product', 'amrod_ajax_sync_single_product');
-function amrod_ajax_sync_single_product() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_sync_single_product', 'woosync_ajax_sync_single_product');
+function woosync_ajax_sync_single_product() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $product_code = sanitize_text_field($_POST['product_code'] ?? '');
@@ -2233,7 +2233,7 @@ function amrod_ajax_sync_single_product() {
         wp_send_json_error('Products endpoint not enabled');
     }
 
-    $products_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
+    $products_url = get_option('woosync_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
     $products = amrod_get_endpoint($token, $products_url);
     
     if ($products === false || !is_array($products)) {
@@ -2256,9 +2256,9 @@ function amrod_ajax_sync_single_product() {
 
 // ===== HELPER FUNCTIONS =====
 
-function amrod_get_endpoints() {
+function woosync_get_endpoints() {
     $defaults = amrod_get_default_endpoints();
-    $stored = get_option('amrod_endpoints');
+    $stored = get_option('woosync_endpoints');
     if ($stored && is_string($stored)) {
         $stored = @json_decode($stored, true);
         if (is_array($stored)) {
@@ -2275,12 +2275,12 @@ function amrod_get_endpoints() {
     return $defaults;
 }
 
-function amrod_save_endpoints($endpoints) {
-    update_option('amrod_endpoints', json_encode($endpoints));
+function woosync_save_endpoints($endpoints) {
+    update_option('woosync_endpoints', json_encode($endpoints));
 }
 
 // ===== VENDOR TIER FUNCTIONS =====
-function amrod_get_vendor_tier($vendor_id = 'amrod') {
+function woosync_get_vendor_tier($vendor_id = 'amrod') {
     $vendors = get_option('woosync_vendors', []);
     if (!is_array($vendors)) {
         $vendors = [];
@@ -2297,7 +2297,7 @@ function amrod_get_vendor_tier($vendor_id = 'amrod') {
     ];
 }
 
-function amrod_save_vendor_tier($vendor_id, $tier_data) {
+function woosync_save_vendor_tier($vendor_id, $tier_data) {
     $vendors = get_option('woosync_vendors', []);
     if (!is_array($vendors)) {
         $vendors = [];
@@ -2307,7 +2307,7 @@ function amrod_save_vendor_tier($vendor_id, $tier_data) {
     update_option('woosync_vendors', $vendors);
 }
 
-function amrod_get_tier_level($tier_name) {
+function woosync_get_tier_level($tier_name) {
     $tiers = [
         'Standard' => 0,
         'Bronze' => 1,
@@ -2318,7 +2318,7 @@ function amrod_get_tier_level($tier_name) {
     return $tiers[$tier_name] ?? 0;
 }
 
-function amrod_get_tier_color_class($tier_name) {
+function woosync_get_tier_color_class($tier_name) {
     $colors = [
         'Standard' => 'tier-standard',
         'Bronze' => 'tier-bronze',
@@ -2329,7 +2329,7 @@ function amrod_get_tier_color_class($tier_name) {
     return $colors[$tier_name] ?? 'tier-standard';
 }
 
-function amrod_get_tier_icon($tier_name) {
+function woosync_get_tier_icon($tier_name) {
     $icons = [
         'Standard' => '📋',
         'Bronze' => '🥉',
@@ -2340,7 +2340,7 @@ function amrod_get_tier_icon($tier_name) {
     return $icons[$tier_name] ?? '📋';
 }
 
-function amrod_generate_preview_with_tier($product, $mapping, $vendor_tier) {
+function woosync_generate_preview_with_tier($product, $mapping, $vendor_tier) {
     $preview = amrod_generate_preview($product, $mapping);
     
     $tier = $vendor_tier['tier'] ?? 'Standard';
@@ -2364,7 +2364,7 @@ function amrod_generate_preview_with_tier($product, $mapping, $vendor_tier) {
     
     $token = amrod_get_token();
     if ($token) {
-        $api_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za');
+        $api_url = get_option('woosync_api_url', 'https://vendorapi.amrod.co.za');
         $prices_endpoint = $vendor_tier['tier_pricing_endpoint'] ?? '/api/v1/Prices/';
         $prices_url = $api_url . $prices_endpoint;
         
@@ -2390,8 +2390,8 @@ function amrod_generate_preview_with_tier($product, $mapping, $vendor_tier) {
     return $preview;
 }
 
-function amrod_get_password() {
-    $stored = get_option('amrod_password');
+function woosync_get_password() {
+    $stored = get_option('woosync_password');
     if ($stored) return $stored;
     $env = getenv('AMROD_API_PASSWORD');
     if ($env !== false && $env !== '') return $env;
@@ -2399,20 +2399,20 @@ function amrod_get_password() {
     return '';
 }
 
-function amrod_mask_token_for_display($token) {
+function woosync_mask_token_for_display($token) {
     if (!$token) return '';
     return substr($token, 0, 6) . '...' . substr($token, -6);
 }
 
-function amrod_get_token() {
-    $cached = get_transient('amrod_token');
+function woosync_get_token() {
+    $cached = get_transient('woosync_token');
     if ($cached) return $cached;
 
-    $auth_url = get_option('amrod_auth_url', 'https://identity.amrod.co.za') . '/VendorLogin';
+    $auth_url = get_option('woosync_auth_url', 'https://identity.amrod.co.za') . '/VendorLogin';
     $payload = json_encode([
-        'username' => get_option('amrod_username'),
+        'username' => get_option('woosync_username'),
         'password' => amrod_get_password(),
-        'CustomerCode' => get_option('amrod_customer_code')
+        'CustomerCode' => get_option('woosync_customer_code')
     ]);
 
     $response = wp_remote_post($auth_url, [
@@ -2422,7 +2422,7 @@ function amrod_get_token() {
     ]);
 
     if (is_wp_error($response)) {
-        amrod_sync_log('Failed to obtain token: ' . $response->get_error_message());
+        woosync_sync_log('Failed to obtain token: ' . $response->get_error_message());
         return false;
     }
 
@@ -2430,27 +2430,27 @@ function amrod_get_token() {
     $body = wp_remote_retrieve_body($response);
 
     if ($code !== 200) {
-        amrod_sync_log("Token endpoint returned HTTP {$code}");
+        woosync_sync_log("Token endpoint returned HTTP {$code}");
         return false;
     }
 
     $data = json_decode($body, true);
     if (json_last_error() !== JSON_ERROR_NONE) {
-        amrod_sync_log('Invalid token response: ' . json_last_error_msg());
+        woosync_sync_log('Invalid token response: ' . json_last_error_msg());
         return false;
     }
 
     $token = $data['token'] ?? false;
     if ($token) {
-        set_transient('amrod_token', $token, 55 * MINUTE_IN_SECONDS);
-        update_option('amrod_last_token', amrod_mask_token_for_display($token));
-        amrod_sync_log('✅ Token obtained successfully');
+        set_transient('woosync_token', $token, 55 * MINUTE_IN_SECONDS);
+        update_option('woosync_last_token', woosync_mask_token_for_display($token));
+        woosync_sync_log('✅ Token obtained successfully');
     }
 
     return $token;
 }
 
-function amrod_get_endpoint($token, $endpoint_url, $retries = 2) {
+function woosync_get_endpoint($token, $endpoint_url, $retries = 2) {
     for ($attempt = 0; $attempt <= $retries; $attempt++) {
         $response = wp_remote_get($endpoint_url, [
             'headers' => ["Authorization" => "Bearer $token"],
@@ -2459,7 +2459,7 @@ function amrod_get_endpoint($token, $endpoint_url, $retries = 2) {
 
         if (is_wp_error($response)) {
             if ($attempt === $retries) {
-                amrod_sync_log('Endpoint error: ' . $response->get_error_message());
+                woosync_sync_log('Endpoint error: ' . $response->get_error_message());
                 return false;
             }
         } else {
@@ -2472,12 +2472,12 @@ function amrod_get_endpoint($token, $endpoint_url, $retries = 2) {
                     return $decoded;
                 }
                 if ($attempt === $retries) {
-                    amrod_sync_log('Invalid JSON: ' . json_last_error_msg());
+                    woosync_sync_log('Invalid JSON: ' . json_last_error_msg());
                     return false;
                 }
             } else {
                 if ($attempt === $retries) {
-                    amrod_sync_log("Endpoint returned HTTP {$code}");
+                    woosync_sync_log("Endpoint returned HTTP {$code}");
                     return false;
                 }
             }
@@ -2491,15 +2491,15 @@ function amrod_get_endpoint($token, $endpoint_url, $retries = 2) {
     return false;
 }
 
-function amrod_sync_log($message) {
-    $log = (array) get_option('amrod_sync_log', []);
+function woosync_sync_log($message) {
+    $log = (array) get_option('woosync_sync_log', []);
     $log[] = '[' . current_time('mysql') . '] ' . $message;
     $log = array_slice($log, -500);
-    update_option('amrod_sync_log', $log);
+    update_option('woosync_sync_log', $log);
 }
 
 // Generate product preview array
-function amrod_generate_preview($product, $mapping) {
+function woosync_generate_preview($product, $mapping) {
     $preview = [
         'sku' => $product[$mapping['sku'] ?? 'ProductCode'] ?? '',
         'name' => $product[$mapping['name'] ?? 'Description'] ?? '',
@@ -2516,7 +2516,7 @@ function amrod_generate_preview($product, $mapping) {
 }
 
 // Sync single product to WooCommerce
-function amrod_sync_single_product($product) {
+function woosync_sync_single_product($product) {
     if (empty($product['ProductCode'])) return false;
 
     $sku = sanitize_text_field($product['ProductCode']);
@@ -2533,7 +2533,7 @@ function amrod_sync_single_product($product) {
 
         if (!$wc_product || !is_a($wc_product, 'WC_Product')) return false;
 
-        $mapping = get_option('amrod_field_mapping', []);
+        $mapping = get_option('woosync_field_mapping', []);
         
         $wc_product->set_sku($sku);
         $wc_product->set_name(sanitize_text_field($product['Description'] ?? 'Product'));
@@ -2552,18 +2552,18 @@ function amrod_sync_single_product($product) {
         $product_id = $wc_product->save();
         
         if ($product_id && $product_id > 0) {
-            amrod_sync_log("✅ Synced product: {$product['Description']} ({$sku})");
+            woosync_sync_log("✅ Synced product: {$product['Description']} ({$sku})");
             return true;
         }
     } catch (Exception $e) {
-        amrod_sync_log('❌ Error syncing product ' . $sku . ': ' . $e->getMessage());
+        woosync_sync_log('❌ Error syncing product ' . $sku . ': ' . $e->getMessage());
     }
     
     return false;
 }
 
 // ===== SYNC BATCH FUNCTION (from previous version) =====
-function amrod_sync_process_batch($offset = 0, $batch_size = 200) {
+function woosync_sync_process_batch($offset = 0, $batch_size = 200) {
     $token = amrod_get_token();
     if (!$token) {
         return ['success' => false, 'processed_total' => 0, 'total' => 0, 'more' => false, 'error' => 'Failed to obtain token'];
@@ -2576,7 +2576,7 @@ function amrod_sync_process_batch($offset = 0, $batch_size = 200) {
         return ['success' => false, 'processed_total' => 0, 'total' => 0, 'more' => false, 'error' => 'Products endpoint not enabled'];
     }
 
-    $products_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
+    $products_url = get_option('woosync_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
     $products = amrod_get_endpoint($token, $products_url);
     
     if ($products === false || !is_array($products)) {
@@ -2586,7 +2586,7 @@ function amrod_sync_process_batch($offset = 0, $batch_size = 200) {
     $total = count($products);
     $batch = array_slice($products, $offset, $batch_size);
     $processed = 0;
-    $mapping = get_option('amrod_field_mapping', []);
+    $mapping = get_option('woosync_field_mapping', []);
 
     foreach ($batch as $p) {
         if (empty($p['ProductCode'])) continue;
@@ -2624,19 +2624,19 @@ function amrod_sync_process_batch($offset = 0, $batch_size = 200) {
                 $processed++;
             }
         } catch (Exception $e) {
-            amrod_sync_log('❌ Error syncing product ' . $sku . ': ' . $e->getMessage());
+            woosync_sync_log('❌ Error syncing product ' . $sku . ': ' . $e->getMessage());
             continue;
         }
     }
 
-    $prev_total = (int) get_option('amrod_total_products', 0);
-    update_option('amrod_total_products', $prev_total + $processed);
-    update_option('amrod_last_sync', current_time('mysql'));
+    $prev_total = (int) get_option('woosync_total_products', 0);
+    update_option('woosync_total_products', $prev_total + $processed);
+    update_option('woosync_last_sync', current_time('mysql'));
 
     $next_offset = $offset + $batch_size;
     $more = $next_offset < $total;
     
-    amrod_sync_log("✅ Batch complete: {$processed} products synced");
+    woosync_sync_log("✅ Batch complete: {$processed} products synced");
     
     return [
         'success' => true,
@@ -2650,7 +2650,7 @@ function amrod_sync_process_batch($offset = 0, $batch_size = 200) {
 
 // ===== HELPER FUNCTIONS FOR SYNC =====
 
-function amrod_get_or_create_category($category_name) {
+function woosync_get_or_create_category($category_name) {
     $category_name = sanitize_text_field(trim($category_name));
     if (empty($category_name)) return 0;
 
@@ -2668,14 +2668,14 @@ function amrod_get_or_create_category($category_name) {
         if ($result->get_error_code() === 'term_exists') {
             return (int) $result->get_error_data();
         }
-        amrod_sync_log('❌ Failed to create category: ' . $result->get_error_message());
+        woosync_sync_log('❌ Failed to create category: ' . $result->get_error_message());
         return 0;
     }
 
     return (int) $result['term_id'];
 }
 
-function amrod_get_category_ids($product, $mapping) {
+function woosync_get_category_ids($product, $mapping) {
     $category_ids = [];
     $category_field = $mapping['categories'] ?? 'CategoryName';
 
@@ -2743,36 +2743,36 @@ add_action('admin_footer', function() {
 // ===== PROMO SHARE TAB =====
 
 // Register Promo Share submenu
-add_action('admin_menu', 'amrod_register_promo_share_menu');
-function amrod_register_promo_share_menu() {
+add_action('admin_menu', 'woosync_register_promo_share_menu');
+function woosync_register_promo_share_menu() {
     if (!class_exists('WooCommerce')) return;
     
     add_submenu_page(
-        'amrod-sync',
+        'woosync',
         'Promo Share',
         '6. Promo Share',
         'manage_options',
-        'amrod-sync-promo-share',
-        'amrod_render_promo_share_page'
+        'woosync-promo-share',
+        'woosync_render_promo_share_page'
     );
 }
 
 // Enqueue promo share JS
-add_action('admin_enqueue_scripts', 'amrod_enqueue_promo_share_assets');
-function amrod_enqueue_promo_share_assets($hook) {
-    if (strpos($hook, 'amrod-sync-promo-share') === false) return;
+add_action('admin_enqueue_scripts', 'woosync_enqueue_promo_share_assets');
+function woosync_enqueue_promo_share_assets($hook) {
+    if (strpos($hook, 'woosync-promo-share') === false) return;
     
     // Bootstrap Icons
     wp_enqueue_style('bootstrap-icons', 'https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css', [], '1.10.0');
     
     // Promo Share JS
-    wp_enqueue_script('amrod-promo-share-js', AMROD_SYNC_ASSETS . 'js/promo-share.js', ['jquery'], AMROD_SYNC_VERSION, true);
-    wp_enqueue_script('amrod-tier-settings-js', AMROD_SYNC_ASSETS . 'js/tier-settings.js', ['jquery'], AMROD_SYNC_VERSION, true);
+    wp_enqueue_script('woosync-promo-share-js', WOOSYNC_ASSETS . 'js/promo-share.js', ['jquery'], WOOSYNC_VERSION, true);
+    wp_enqueue_script('woosync-tier-settings-js', WOOSYNC_ASSETS . 'js/tier-settings.js', ['jquery'], WOOSYNC_VERSION, true);
     
     // Localize data
-    wp_localize_script('amrod-promo-share-js', 'amrodSyncData', [
+    wp_localize_script('woosync-promo-share-js', 'woosyncData', [
         'ajaxUrl' => admin_url('admin-ajax.php'),
-        'nonce' => wp_create_nonce('amrod_sync_nonce'),
+        'nonce' => wp_create_nonce('woosync_sync_nonce'),
     ]);
 }
 
@@ -2797,14 +2797,14 @@ function woosync_fetch_promos($vendor_id = 'amrod') {
         return ['error' => 'Products endpoint not enabled'];
     }
     
-    $products_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
+    $products_url = get_option('woosync_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
     $products = amrod_get_endpoint($token, $products_url);
     
     if ($products === false || !is_array($products)) {
         return ['error' => 'Failed to fetch products from API'];
     }
     
-    $mapping = get_option('amrod_field_mapping', []);
+    $mapping = get_option('woosync_field_mapping', []);
     
     // Filter and process promos
     $promos = [];
@@ -2920,12 +2920,12 @@ function woosync_fetch_promos($vendor_id = 'amrod') {
 }
 
 // Promo Share Page Renderer
-function amrod_render_promo_share_page() {
+function woosync_render_promo_share_page() {
     $last_fetch = get_option('woosync_last_promo_fetch', 'Never');
-    $connected = !empty(get_option('amrod_username')) && !empty(get_option('amrod_password'));
+    $connected = !empty(get_option('woosync_username')) && !empty(get_option('woosync_password'));
     ?>
     <div class="container-fluid mt-4 amrod-container" id="promoShareTab">
-        <?php amrod_breadcrumb(['Dashboard' => '?page=amrod-sync', 'Promo Share' => false]); ?>
+        <?php amrod_breadcrumb(['Dashboard' => '?page=woosync-sync', 'Promo Share' => false]); ?>
         
         <!-- Header -->
         <div class="d-flex justify-content-between align-items-center mb-4">
@@ -2948,7 +2948,7 @@ function amrod_render_promo_share_page() {
         <div class="alert alert-warning">
             <i class="bi bi-exclamation-triangle me-2"></i>
             <strong>API not connected.</strong> Please configure your Amrod API credentials in 
-            <a href="?page=amrod-sync-settings" class="alert-link">Settings</a> to load promos.
+            <a href="?page=woosync-sync-settings" class="alert-link">Settings</a> to load promos.
         </div>
         <?php else: ?>
         
@@ -3037,9 +3037,9 @@ function amrod_render_promo_share_page() {
 }
 
 // AJAX: Fetch Promos
-add_action('wp_ajax_woosync_fetch_promos', 'amrod_ajax_fetch_promos');
-function amrod_ajax_fetch_promos() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_fetch_promos', 'woosync_ajax_fetch_promos');
+function woosync_ajax_fetch_promos() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $force_refresh = isset($_POST['force_refresh']) && $_POST['force_refresh'];
@@ -3058,9 +3058,9 @@ function amrod_ajax_fetch_promos() {
 }
 
 // AJAX: Send Promo Email
-add_action('wp_ajax_woosync_send_promo_email', 'amrod_ajax_send_promo_email');
-function amrod_ajax_send_promo_email() {
-    check_ajax_referer('amrod_sync_nonce');
+add_action('wp_ajax_woosync_send_promo_email', 'woosync_ajax_send_promo_email');
+function woosync_ajax_send_promo_email() {
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $product_code = sanitize_text_field($_POST['product_code'] ?? '');
@@ -3158,54 +3158,54 @@ function amrod_ajax_send_promo_email() {
 // =============================================================================
 
 // ===== REGISTER PRICING SETTINGS =====
-add_action('admin_init', 'amrod_register_pricing_settings');
-function amrod_register_pricing_settings() {
-    register_setting('amrod_pricing_group', 'woosync_tiered_pricing_enabled');
-    register_setting('amrod_pricing_group', 'woosync_default_markup');
-    register_setting('amrod_pricing_group', 'woosync_role_markups');
-    register_setting('amrod_pricing_group', 'woosync_user_markups');
-    register_setting('amrod_pricing_group', 'woosync_minimum_margin');
-    register_setting('amrod_pricing_group', 'woosync_maximum_discount');
-    register_setting('amrod_pricing_group', 'woosync_clearance_minimum');
-    register_setting('amrod_pricing_group', 'woosync_show_prices_logged_out');
-    register_setting('amrod_pricing_group', 'woosync_customer_tiers');
+add_action('admin_init', 'woosync_register_pricing_settings');
+function woosync_register_pricing_settings() {
+    register_setting('woosync_pricing_group', 'woosync_tiered_pricing_enabled');
+    register_setting('woosync_pricing_group', 'woosync_default_markup');
+    register_setting('woosync_pricing_group', 'woosync_role_markups');
+    register_setting('woosync_pricing_group', 'woosync_user_markups');
+    register_setting('woosync_pricing_group', 'woosync_minimum_margin');
+    register_setting('woosync_pricing_group', 'woosync_maximum_discount');
+    register_setting('woosync_pricing_group', 'woosync_clearance_minimum');
+    register_setting('woosync_pricing_group', 'woosync_show_prices_logged_out');
+    register_setting('woosync_pricing_group', 'woosync_customer_tiers');
 }
 
 // ===== ADD PRICING TAB TO MENU =====
-add_action('admin_menu', 'amrod_register_pricing_menu');
-function amrod_register_pricing_menu() {
+add_action('admin_menu', 'woosync_register_pricing_menu');
+function woosync_register_pricing_menu() {
     if (!class_exists('WooCommerce')) return;
     
     add_submenu_page(
-        'amrod-sync',
+        'woosync',
         'Pricing',
         '6. Pricing',
         'manage_options',
-        'amrod-sync-pricing',
-        'amrod_render_pricing_page'
+        'woosync-pricing',
+        'woosync_render_pricing_page'
     );
 }
 
 // ===== ENQUEUE PRICING ASSETS =====
-add_action('admin_enqueue_scripts', 'amrod_enqueue_pricing_assets');
-function amrod_enqueue_pricing_assets($hook) {
-    if (strpos($hook, 'amrod-sync-pricing') === false) return;
+add_action('admin_enqueue_scripts', 'woosync_enqueue_pricing_assets');
+function woosync_enqueue_pricing_assets($hook) {
+    if (strpos($hook, 'woosync-pricing') === false) return;
     
     // DataTables CSS (optional)
-    wp_enqueue_style('amrod-pricing-css', AMROD_SYNC_ASSETS . 'css/admin.css', ['bootstrap5-css'], AMROD_SYNC_VERSION);
+    wp_enqueue_style('woosync-pricing-css', WOOSYNC_ASSETS . 'css/admin.css', ['bootstrap5-css'], WOOSYNC_VERSION);
     
     // Pricing JS
-    wp_enqueue_script('amrod-pricing-js', AMROD_SYNC_ASSETS . 'js/pricing.js', ['jquery'], AMROD_SYNC_VERSION, true);
+    wp_enqueue_script('woosync-pricing-js', WOOSYNC_ASSETS . 'js/pricing.js', ['jquery'], WOOSYNC_VERSION, true);
     
     // Localize data
-    wp_localize_script('amrod-pricing-js', 'amrodSyncData', [
+    wp_localize_script('woosync-pricing-js', 'woosyncData', [
         'ajaxUrl' => admin_url('admin-ajax.php'),
-        'nonce' => wp_create_nonce('amrod_sync_nonce'),
+        'nonce' => wp_create_nonce('woosync_sync_nonce'),
     ]);
 }
 
 // ===== RENDER PRICING PAGE =====
-function amrod_render_pricing_page() {
+function woosync_render_pricing_page() {
     $tiered_enabled = get_option('woosync_tiered_pricing_enabled', false);
     $default_markup = get_option('woosync_default_markup', 30);
     $role_markups = get_option('woosync_role_markups', []);
@@ -3240,7 +3240,7 @@ function amrod_render_pricing_page() {
     }
     ?>
     <div class="container-fluid mt-4 amrod-container">
-        <?php amrod_breadcrumb(['Dashboard' => '?page=amrod-sync', 'Pricing' => false]); ?>
+        <?php amrod_breadcrumb(['Dashboard' => '?page=woosync-sync', 'Pricing' => false]); ?>
         
         <!-- Header -->
         <div class="d-flex justify-content-between align-items-center mb-4">
@@ -3499,7 +3499,7 @@ function amrod_render_pricing_page() {
                             <div class="card-body">
                                 <p class="text-muted small">CSV format: <code>email,markup%,tier_label</code></p>
                                 <form id="importCustomersForm" enctype="multipart/form-data">
-                                    <?php wp_nonce_field('amrod_sync_nonce'); ?>
+                                    <?php wp_nonce_field('woosync_sync_nonce'); ?>
                                     <input type="hidden" name="action" value="woosync_import_customers">
                                     <div class="mb-2">
                                         <input type="file" name="import_file" class="form-control" accept=".csv">
@@ -3744,11 +3744,11 @@ function amrod_render_pricing_page() {
         if (!confirm('Remove custom pricing for this customer?')) return;
         
         jQuery.ajax({
-            url: amrodSyncData.ajaxUrl,
+            url: woosyncData.ajaxUrl,
             type: 'POST',
             data: {
                 action: 'woosync_remove_customer_markup',
-                nonce: amrodSyncData.nonce,
+                nonce: woosyncData.nonce,
                 customer_id: userId
             },
             success: function(response) {
@@ -3771,11 +3771,11 @@ function amrod_render_pricing_page() {
     jQuery('#saveDefaultMarkup').on('click', function() {
         var markup = jQuery('#defaultMarkup').val();
         jQuery.ajax({
-            url: amrodSyncData.ajaxUrl,
+            url: woosyncData.ajaxUrl,
             type: 'POST',
             data: {
                 action: 'woosync_save_default_markup',
-                nonce: amrodSyncData.nonce,
+                nonce: woosyncData.nonce,
                 markup: markup
             },
             success: function(response) {
@@ -3936,7 +3936,7 @@ function woosync_filter_variation_price($price, $product) {
 // Save Role Markup
 add_action('wp_ajax_woosync_save_role_markup', 'woosync_ajax_save_role_markup');
 function woosync_ajax_save_role_markup() {
-    check_ajax_referer('amrod_sync_nonce');
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $role = sanitize_text_field($_POST['role']);
@@ -3955,7 +3955,7 @@ function woosync_ajax_save_role_markup() {
 // Toggle Role Markup
 add_action('wp_ajax_woosync_toggle_role_markup', 'woosync_ajax_toggle_role_markup');
 function woosync_ajax_toggle_role_markup() {
-    check_ajax_referer('amrod_sync_nonce');
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $role = sanitize_text_field($_POST['role']);
@@ -3974,7 +3974,7 @@ function woosync_ajax_toggle_role_markup() {
 // Apply Blanket to All Roles
 add_action('wp_ajax_woosync_apply_blanket_to_all', 'woosync_ajax_apply_blanket_to_all');
 function woosync_ajax_apply_blanket_to_all() {
-    check_ajax_referer('amrod_sync_nonce');
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $markup = floatval($_POST['markup']);
@@ -3992,7 +3992,7 @@ function woosync_ajax_apply_blanket_to_all() {
 // Search Customers
 add_action('wp_ajax_woosync_search_customers', 'woosync_ajax_search_customers');
 function woosync_ajax_search_customers() {
-    check_ajax_referer('amrod_sync_nonce');
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $query = sanitize_text_field($_POST['query']);
@@ -4023,7 +4023,7 @@ function woosync_ajax_search_customers() {
 // Get Customer Markup
 add_action('wp_ajax_woosync_get_customer_markup', 'woosync_ajax_get_customer_markup');
 function woosync_ajax_get_customer_markup() {
-    check_ajax_referer('amrod_sync_nonce');
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $customer_id = intval($_POST['customer_id']);
@@ -4038,7 +4038,7 @@ function woosync_ajax_get_customer_markup() {
 // Save Customer Markup
 add_action('wp_ajax_woosync_save_customer_markup', 'woosync_ajax_save_customer_markup');
 function woosync_ajax_save_customer_markup() {
-    check_ajax_referer('amrod_sync_nonce');
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $customer_id = intval($_POST['customer_id']);
@@ -4058,7 +4058,7 @@ function woosync_ajax_save_customer_markup() {
 // Bulk Update Customers
 add_action('wp_ajax_woosync_bulk_update_customers', 'woosync_ajax_bulk_update_customers');
 function woosync_ajax_bulk_update_customers() {
-    check_ajax_referer('amrod_sync_nonce');
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $customer_ids = $_POST['customer_ids'];
@@ -4087,7 +4087,7 @@ function woosync_ajax_bulk_update_customers() {
 // Remove Customer Markup
 add_action('wp_ajax_woosync_remove_customer_markup', 'woosync_ajax_remove_customer_markup');
 function woosync_ajax_remove_customer_markup() {
-    check_ajax_referer('amrod_sync_nonce');
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $customer_id = intval($_POST['customer_id']);
@@ -4101,7 +4101,7 @@ function woosync_ajax_remove_customer_markup() {
 // Import Customers from CSV
 add_action('wp_ajax_woosync_import_customers', 'woosync_ajax_import_customers');
 function woosync_ajax_import_customers() {
-    check_ajax_referer('amrod_sync_nonce');
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     if (empty($_FILES['import_file'])) {
@@ -4150,7 +4150,7 @@ function woosync_ajax_import_customers() {
 // Calculate Price (for preview)
 add_action('wp_ajax_woosync_calculate_price', 'woosync_ajax_calculate_price');
 function woosync_ajax_calculate_price() {
-    check_ajax_referer('amrod_sync_nonce');
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $product_id = intval($_POST['product_id']);
@@ -4198,7 +4198,7 @@ function woosync_ajax_calculate_price() {
 // Toggle Tiered Pricing
 add_action('wp_ajax_woosync_toggle_tiered_pricing', 'woosync_ajax_toggle_tiered_pricing');
 function woosync_ajax_toggle_tiered_pricing() {
-    check_ajax_referer('amrod_sync_nonce');
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $enabled = intval($_POST['enabled']);
@@ -4210,7 +4210,7 @@ function woosync_ajax_toggle_tiered_pricing() {
 // Save Pricing Rules
 add_action('wp_ajax_woosync_save_pricing_rules', 'woosync_ajax_save_pricing_rules');
 function woosync_ajax_save_pricing_rules() {
-    check_ajax_referer('amrod_sync_nonce');
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $rules = $_POST['rules'];
@@ -4225,7 +4225,7 @@ function woosync_ajax_save_pricing_rules() {
 // Save Default Markup
 add_action('wp_ajax_woosync_save_default_markup', 'woosync_ajax_save_default_markup');
 function woosync_ajax_save_default_markup() {
-    check_ajax_referer('amrod_sync_nonce');
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $markup = floatval($_POST['markup']);
@@ -4237,7 +4237,7 @@ function woosync_ajax_save_default_markup() {
 // Search Products for Preview
 add_action('wp_ajax_woosync_search_products_for_preview', 'woosync_ajax_search_products_for_preview');
 function woosync_ajax_search_products_for_preview() {
-    check_ajax_referer('amrod_sync_nonce');
+    check_ajax_referer('woosync_sync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
     $query = sanitize_text_field($_POST['query']);

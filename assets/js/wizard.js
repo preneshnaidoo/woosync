@@ -43,7 +43,7 @@ jQuery(function($) {
                     <!-- Modal Header -->
                     <div class="modal-header woosync-wizard-header">
                         <div class="wizard-logo-container">
-                            <img src="${amrodSyncData.assetsUrl}images/woosync-logo.svg" alt="WooSync" height="40">
+                            <img src="${woosyncData.assetsUrl}images/woosync-logo.svg" alt="WooSync" height="40">
                         </div>
                         <span class="wizard-step-indicator" id="wizardStepIndicator">Step 1 of 3</span>
                     </div>
@@ -147,7 +147,7 @@ jQuery(function($) {
         var html = `
         <div class="wizard-step-content wizard-welcome-step">
             <div class="wizard-hero">
-                <img src="${amrodSyncData.assetsUrl}images/woosync-logo.svg" alt="WooSync" height="80" class="wizard-hero-logo">
+                <img src="${woosyncData.assetsUrl}images/woosync-logo.svg" alt="WooSync" height="80" class="wizard-hero-logo">
                 <h2 class="wizard-hero-title">Welcome to WooSync</h2>
                 <p class="wizard-hero-tagline">Enterprise-grade product sync for WooCommerce — connecting you to Amrod, SMD, and other promo suppliers.</p>
             </div>
@@ -190,14 +190,14 @@ jQuery(function($) {
 
     // STEP 1: Select Vendor
     function renderSelectVendorStep() {
-        var vendors = amrodSyncData.vendorTemplates || [];
+        var vendors = woosyncData.vendorTemplates || [];
         var vendorCardsHtml = '';
         
         vendors.forEach(function(vendor) {
             // Get auth type from schemas if available
             var authType = '';
-            if (amrodSyncData.vendorCredentialSchemas && amrodSyncData.vendorCredentialSchemas[vendor.id]) {
-                var schema = amrodSyncData.vendorCredentialSchemas[vendor.id];
+            if (woosyncData.vendorCredentialSchemas && woosyncData.vendorCredentialSchemas[vendor.id]) {
+                var schema = woosyncData.vendorCredentialSchemas[vendor.id];
                 authType = '<span class="vendor-auth-badge">' + (schema.auth_type === 'bearer_key' ? 'Bearer Token' : schema.auth_type === 'vendor_login' ? 'Vendor Login' : 'Custom Auth') + '</span>';
             }
             
@@ -261,9 +261,9 @@ jQuery(function($) {
         }
         
         // Get credential schema for this vendor
-        var schema = (amrodSyncData.vendorCredentialSchemas && amrodSyncData.vendorCredentialSchemas[vendorId]) 
-            ? amrodSyncData.vendorCredentialSchemas[vendorId] 
-            : amrodSyncData.vendorCredentialSchemas['custom'];
+        var schema = (woosyncData.vendorCredentialSchemas && woosyncData.vendorCredentialSchemas[vendorId]) 
+            ? woosyncData.vendorCredentialSchemas[vendorId] 
+            : woosyncData.vendorCredentialSchemas['custom'];
         
         // Render support panel based on vendor
         var supportPanelHtml = renderSupportPanel(vendor, schema);
@@ -463,7 +463,7 @@ jQuery(function($) {
     // ============================================================
     
     function selectVendor(vendorId) {
-        var vendors = amrodSyncData.vendorTemplates || [];
+        var vendors = woosyncData.vendorTemplates || [];
         var vendor = vendors.find(function(v) { return v.id === vendorId; });
         
         if (vendor) {
@@ -485,9 +485,9 @@ jQuery(function($) {
         
         // Build request data from form fields
         var requestData = {
-            action: 'amrod_test_connection',
+            action: 'woosync_test_connection',
             vendor_id: wizardState.selectedVendorId,
-            nonce: amrodSyncData.nonce
+            nonce: woosyncData.nonce
         };
         
         // Add all form fields to request
@@ -501,7 +501,7 @@ jQuery(function($) {
         });
         
         $.ajax({
-            url: amrodSyncData.ajaxUrl,
+            url: woosyncData.ajaxUrl,
             type: 'POST',
             data: requestData,
             success: function(response) {
@@ -532,9 +532,9 @@ jQuery(function($) {
         
         // Build request data from form fields
         var requestData = {
-            action: 'amrod_save_credentials_simple',
+            action: 'woosync_save_credentials_simple',
             vendor_id: wizardState.selectedVendorId,
-            nonce: amrodSyncData.nonce
+            nonce: woosyncData.nonce
         };
         
         // Add all form fields to request
@@ -548,7 +548,7 @@ jQuery(function($) {
         });
         
         $.ajax({
-            url: amrodSyncData.ajaxUrl,
+            url: woosyncData.ajaxUrl,
             type: 'POST',
             data: requestData,
             success: function(response) {
@@ -635,7 +635,7 @@ jQuery(function($) {
     // Initialize on page load
     $(document).ready(function() {
         // Only show wizard on WooSync admin pages
-        if (typeof amrodSyncData !== 'undefined' && amrodSyncData.isWooSyncPage) {
+        if (typeof woosyncData !== 'undefined' && woosyncData.isWooSyncPage) {
             initWizard();
         }
     });

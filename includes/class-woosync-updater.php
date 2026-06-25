@@ -56,7 +56,7 @@ class WooSync_Updater {
      */
     public function check_for_update($transient) {
         // Skip if check disabled or in AJAX context
-        if (empty(get_option('amrod_auto_update', 1))) {
+        if (empty(get_option('woosync_auto_update', 1))) {
             return $transient;
         }
         

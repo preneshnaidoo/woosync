@@ -68,7 +68,7 @@ See CHANGELOG.md for complete version history.
 ## Upgrade Notice
 
 ### 3.0.0
-This is a major rewrite. If upgrading from Amrod Sync 2.x, your Amrod vendor will be automatically migrated. Review field mappings after upgrade.
+This is a major rewrite. If upgrading from WooSync 2.x, your Amrod vendor will be automatically migrated. Review field mappings after upgrade.
 
 ## Screenshots
 
