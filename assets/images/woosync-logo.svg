@@ -1,35 +1,30 @@
-<svg viewBox="0 0 200 60" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 200 60" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+  <!-- Indigo gradient background -->
   <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#1a1a2e"/>
-      <stop offset="100%" style="stop-color:#16213e"/>
-    </linearGradient>
-    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" style="stop-color:#f97316"/>
-      <stop offset="100%" style="stop-color:#fb923c"/>
+    <linearGradient id="indigoGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#4338CA"/>
+      <stop offset="100%" style="stop-color:#6366F1"/>
     </linearGradient>
   </defs>
   
-  <!-- Background -->
-  <rect width="200" height="60" rx="8" fill="url(#bgGrad)"/>
+  <!-- W Letter with indigo -->
+  <path d="M 10 45 L 10 15 L 22 15 L 28 32 L 34 15 L 46 15 L 46 45" 
+        stroke="url(#indigoGrad)" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
   
-  <!-- Sync Arrows Icon -->
-  <g transform="translate(15, 10)">
-    <path d="M8 20 Q8 10 18 10 L22 10 Q32 10 32 20 Q32 30 22 30 L18 30" 
-          stroke="#f97316" stroke-width="3" fill="none" stroke-linecap="round"/>
-    <path d="M24 15 L32 20 L24 25" 
-          stroke="#f97316" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M32 20 Q32 30 22 30 L18 30 Q8 30 8 20" 
-          stroke="#fb923c" stroke-width="3" fill="none" stroke-linecap="round"/>
-    <path d="M16 25 L8 20 L16 15" 
-          stroke="#fb923c" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
+  <!-- S Letter -->
+  <path d="M 55 15 Q 55 10 62 10 Q 70 10 70 18 Q 70 25 55 30 Q 40 35 40 42 Q 40 50 48 50 Q 55 50 55 45" 
+        stroke="#0EA5E9" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
   
-  <!-- Text: WooSync -->
-  <text x="60" y="38" font-family="Arial, sans-serif" font-size="22" font-weight="bold" fill="#ffffff">
-    WooSync
+  <!-- Sync arrows (circle with arrows) -->
+  <circle cx="95" cy="30" r="12" stroke="#4338CA" stroke-width="2" fill="none"/>
+  <path d="M 88 26 L 95 22 L 102 26" stroke="#4338CA" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 102 34 L 95 38 L 88 34" stroke="#0EA5E9" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Text: woosync -->
+  <text x="115" y="40" font-family="'Myriad Pro', -apple-system, BlinkMacSystemFont, sans-serif" font-size="16" font-weight="700" fill="#4338CA">
+    woosync
   </text>
   
   <!-- Accent underline -->
-  <rect x="60" y="45" width="60" height="3" rx="1.5" fill="url(#accentGrad)"/>
+  <line x1="115" y1="44" x2="195" y2="44" stroke="#0EA5E9" stroke-width="2" opacity="0.6"/>
 </svg>

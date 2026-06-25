@@ -1,1499 +1,667 @@
 <?php
-/**
- * Plugin Name: WooSync - Multi-Vendor WooCommerce Sync
- * Description: Enterprise-grade multi-vendor supplier sync for WooCommerce with smart auto-mapping, field mapping, progress tracking, and automated scheduling. Sync products from Amrod, Barron, Giftwrap, and custom suppliers.
- * Version: 3.1.0
- * Author: Mediaplatform
- * Author URI: https://mediaplatform.co.za
- * Plugin URI: https://mediaplatform.co.za/woosync
- * License: GPL-2.0+
- * License URI: https://www.gnu.org/licenses/gpl-2.0.html
- * Text Domain: woosync
- * Domain Path: /languages
- * Requires at least: 5.6
- * Tested up to: 6.5
- * Requires PHP: 7.4
- * WC requires at least: 5.0
- * WC tested up to: 8.0
- */
+/*
+Plugin Name: Amrod WooCommerce Sync
+Description: Enterprise-grade sync for Amrod products, stock, categories, and colours into WooCommerce with field mapping, progress tracking, and automated cron scheduling.
+Version: 3.4.1
+Author: Mediaplatform
+License: GPL-2.0+
+Text Domain: amrod-sync
+Domain Path: /languages
+*/
 
-if (!defined('ABSPATH')) exit;
+if ( ! defined( 'ABSPATH' ) ) exit;
 
 // ===== CONSTANTS & CONFIGURATION =====
-define('WOOSYNC_VERSION', '1.0.0');
-define('WOOSYNC_PATH', plugin_dir_path(__FILE__));
-define('WOOSYNC_URL', plugin_dir_url(__FILE__));
-define('WOOSYNC_ASSETS', WOOSYNC_URL . 'assets/');
-// ===== GITHUB AUTO-UPDATER =====
-require_once WOOSYNC_PATH . 'includes/class-woosync-updater.php';
+define('AMROD_SYNC_VERSION', '3.4.1');
+define('AMROD_SYNC_PATH', plugin_dir_path(__FILE__));
+define('AMROD_SYNC_URL', plugin_dir_url(__FILE__));
+define('AMROD_SYNC_ASSETS', AMROD_SYNC_URL . 'assets/');
+// ===== AUTO-UPDATER =====
+require_once AMROD_SYNC_PATH . 'includes/class-woosync-updater.php';
+new WooSync_Updater(AMROD_SYNC_VERSION, plugin_basename(__FILE__), AMROD_SYNC_PATH);
 
 
-// ===== BACKWARDS COMPATIBILITY ALIASES =====
-if (!defined('AMROD_SYNC_VERSION')) {
-    define('AMROD_SYNC_VERSION', WOOSYNC_VERSION);
-}
-if (!defined('AMROD_SYNC_PATH')) {
-    define('AMROD_SYNC_PATH', WOOSYNC_PATH);
-}
-if (!defined('AMROD_SYNC_URL')) {
-    define('AMROD_SYNC_URL', WOOSYNC_URL);
-}
-if (!defined('AMROD_SYNC_ASSETS')) {
-    define('AMROD_SYNC_ASSETS', WOOSYNC_ASSETS);
-}
-
-
-// ===== NOTIFICATIONS CLASS =====
-require_once WOOSYNC_PATH . 'includes/class-woosync-notifications.php';
-
-// ===== WOOCOMMERCE DEPENDENCY CHECK =====
-add_action('plugins_loaded', 'woosync_check_woocommerce');
-function woosync_check_woocommerce() {
+// ===== WooCommerce Dependency Check =====
+add_action('plugins_loaded', 'amrod_check_woocommerce');
+function amrod_check_woocommerce() {
     if (!class_exists('WooCommerce')) {
         add_action('admin_notices', function() {
-            echo '<div class="notice notice-error"><p><strong>❌ WooSync:</strong> WooCommerce must be active. Plugin deactivated.</p></div>';
+            echo '<div class="notice notice-error"><p><strong>❌ Amrod Sync:</strong> WooCommerce must be active. Plugin deactivated.</p></div>';
         });
         deactivate_plugins(plugin_basename(__FILE__));
     }
 }
 
-// ===== HOOKS FOR BACKWARDS COMPATIBILITY =====
-register_activation_hook(__FILE__, function() {
-    if (!class_exists('WooCommerce')) {
-        deactivate_plugins(plugin_basename(__FILE__));
-        wp_die('WooSync requires WooCommerce to be active.');
-    }
-    set_transient('woosync_activated', 1, HOUR_IN_SECONDS);
-    
-    // Migrate legacy Amrod options if present
-    woosync_migrate_legacy_options();
-    
-    // Schedule daily update check
-    WooSync_Updater::schedule_update_check();
-});
-
-function woosync_migrate_legacy_options() {
-    // Check if legacy Amrod options exist
-    $legacy_username = get_option('amrod_username');
-    $legacy_password = get_option('amrod_password');
-    
-    if ($legacy_username && !get_option('woosync_vendors')) {
-        // Migrate Amrod as default vendor
-        $vendors = get_option('woosync_vendors', []);
-        
-        // Only migrate if no vendors exist yet
-        if (empty($vendors)) {
-            $amrod_vendor = [
-                'id' => 'amrod_default',
-                'name' => 'Amrod',
-                'slug' => 'amrod',
-                'logo' => '',
-                'enabled' => true,
-                'auth_url' => get_option('amrod_auth_url', 'https://identity.amrod.co.za'),
-                'api_url' => get_option('amrod_api_url', 'https://vendorapi.amrod.co.za'),
-                'docs_url' => get_option('amrod_docs_url', 'https://newapidocs.amrod.co.za'),
-                'username' => $legacy_username,
-                'password' => $legacy_password,
-                'customer_code' => get_option('amrod_customer_code'),
-                'auth_type' => 'vendor_login',
-                'endpoints' => get_option('amrod_endpoints', ''),
-                'field_mapping' => get_option('amrod_field_mapping', ''),
-                'sync_mode' => 'full',
-                'last_sync' => get_option('amrod_last_sync', ''),
-                'total_products' => get_option('amrod_total_products', 0),
-                'created_at' => current_time('mysql'),
-                'updated_at' => current_time('mysql')
-            ];
-            
-            // Store as serialized array for vendor management
-            update_option('woosync_vendors', [$amrod_vendor]);
-            update_option('woosync_active_vendor', 'amrod_default');
-        }
-    }
-}
-
 // ===== ENQUEUE ASSETS =====
-add_action('admin_enqueue_scripts', 'woosync_enqueue_assets');
-function woosync_enqueue_assets($hook) {
-    if (strpos($hook, 'woosync') === false) return;
+add_action('admin_enqueue_scripts', 'amrod_enqueue_assets');
+function amrod_enqueue_assets($hook) {
+    if (strpos($hook, 'amrod-sync') === false) return;
 
     // Bootstrap 5 CSS
     wp_enqueue_style('bootstrap5-css', 'https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css', [], '5.0.2');
     
     // Bootstrap 5 JS
     wp_enqueue_script('bootstrap5-js', 'https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js', [], '5.0.2', true);
-
     // Chart.js
     wp_enqueue_script('chart-js', 'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js', [], '3.9.1', true);
 
     // Custom Admin CSS
-    wp_enqueue_style('woosync-admin-css', WOOSYNC_ASSETS . 'css/admin.css', ['bootstrap5-css'], WOOSYNC_VERSION);
+    wp_enqueue_style('amrod-admin-css', AMROD_SYNC_ASSETS . 'css/admin.css', ['bootstrap5-css'], AMROD_SYNC_VERSION);
 
     // Custom JS
-    wp_enqueue_script('woosync-sync-js', WOOSYNC_ASSETS . 'js/sync-progress.js', ['jquery', 'chart-js'], WOOSYNC_VERSION, true);
-    wp_enqueue_script('woosync-mapping-js', WOOSYNC_ASSETS . 'js/field-mapping.js', ['jquery'], WOOSYNC_VERSION, true);
-    wp_enqueue_script('woosync-wizard-js', WOOSYNC_ASSETS . 'js/wizard.js', ['jquery'], WOOSYNC_VERSION, true);
-    wp_enqueue_script('woosync-promotions-js', WOOSYNC_ASSETS . 'js/promotions.js', ['jquery', 'jquery-ui-datepicker'], WOOSYNC_VERSION, true);
-    wp_enqueue_script('woosync-optimizer-js', WOOSYNC_ASSETS . 'js/optimizer.js', ['jquery'], WOOSYNC_VERSION, true);
-    wp_enqueue_script('woosync-promo-share-js', WOOSYNC_ASSETS . 'js/promo-share.js', ['jquery'], WOOSYNC_VERSION, true);
-    wp_enqueue_script('woosync-pricing-js', WOOSYNC_ASSETS . 'js/pricing.js', ['jquery'], WOOSYNC_VERSION, true);
-    wp_enqueue_script('woosync-tier-settings-js', WOOSYNC_ASSETS . 'js/tier-settings.js', ['jquery'], WOOSYNC_VERSION, true);
+    wp_enqueue_script('amrod-sync-js', AMROD_SYNC_ASSETS . 'js/sync-progress.js', ['jquery', 'chart-js'], AMROD_SYNC_VERSION, true);
+    wp_enqueue_script('amrod-mapping-js', AMROD_SYNC_ASSETS . 'js/field-mapping.js', ['jquery'], AMROD_SYNC_VERSION, true);
+    wp_enqueue_script('amrod-connect-map-js', AMROD_SYNC_ASSETS . 'js/connect-map.js', ['jquery'], AMROD_SYNC_VERSION, true);
+    wp_enqueue_script('amrod-wizard-js', AMROD_SYNC_ASSETS . 'js/wizard.js', ['jquery', 'bootstrap5-js'], AMROD_SYNC_VERSION, true);
+    wp_localize_script('amrod-wizard-js', 'amrodSyncData', [
+        'ajaxUrl' => admin_url('admin-ajax.php'),
+        'nonce' => wp_create_nonce('amrod_sync_nonce'),
+        'assetsUrl' => AMROD_SYNC_ASSETS,
+        'isWooSyncPage' => (strpos($hook, 'amrod-sync') !== false),
+        'vendorTemplates' => array_values(amrod_get_vendor_templates()),
+        'vendorCredentialSchemas' => amrod_get_vendor_credential_schemas(),
+    ]);
 
     // Localize data for JS
-    wp_localize_script('woosync-promo-share-js', 'woosyncPromoShare', [
+    wp_localize_script('amrod-sync-js', 'amrodSyncData', [
         'ajaxUrl' => admin_url('admin-ajax.php'),
-        'nonce' => wp_create_nonce('woosync_promo_share'),
-        'version' => WOOSYNC_VERSION
-    ]);
-    wp_localize_script('woosync-pricing-js', 'woosyncPricing', [
-        'ajaxUrl' => admin_url('admin-ajax.php'),
-        'nonce' => wp_create_nonce('woosync_pricing'),
-        'version' => WOOSYNC_VERSION
-    ]);
-    wp_localize_script('woosync-tier-settings-js', 'woosyncTier', [
-        'ajaxUrl' => admin_url('admin-ajax.php'),
-        'nonce' => wp_create_nonce('woosync_tier'),
-        'version' => WOOSYNC_VERSION,
-        'vendorName' => $active_vendor['name'] ?? 'Amrod'
-    ]);
-    wp_localize_script('woosync-promotions-js', 'woosyncPromotions', [
-        'ajaxUrl' => admin_url('admin-ajax.php'),
-        'nonce' => wp_create_nonce('woosync_notifications'),
-        'version' => WOOSYNC_VERSION
-    ]);
-    
-    wp_localize_script('woosync-sync-js', 'woosyncData', [
-        'ajaxUrl' => admin_url('admin-ajax.php'),
-        'nonce' => wp_create_nonce('woosync_nonce'),
-        'version' => WOOSYNC_VERSION
+        'nonce' => wp_create_nonce('amrod_sync_nonce'),
+        'assetsUrl' => AMROD_SYNC_ASSETS,
+        'isWooSyncPage' => (strpos($hook, 'amrod-sync') !== false),
+        'vendorTemplates' => array_values(amrod_get_vendor_templates()),
     ]);
 }
 
 // ===== REGISTER SETTINGS =====
-add_action('admin_init', 'woosync_register_settings');
-function woosync_register_settings() {
-    register_setting('woosync_group', 'woosync_vendors');
-    register_setting('woosync_group', 'woosync_active_vendor');
-    register_setting('woosync_group', 'woosync_batch_size');
-    register_setting('woosync_group', 'woosync_sync_schedule');
-    register_setting('woosync_group', 'woosync_log_retain_days');
-    register_setting('woosync_group', 'woosync_wizard_completed');
-    register_setting('woosync_group', 'woosync_sync_log');
-    register_setting('woosync_group', 'woosync_last_sync');
-    register_setting('woosync_group', 'woosync_total_products');
-    register_setting('woosync_group', 'woosync_notifications');
-    register_setting('woosync_group', 'woosync_dismissed');
-    register_setting('woosync_group', 'woosync_services');
-    register_setting('woosync_group', 'woosync_show_services');
-    register_setting('woosync_group', 'woosync_tiered_pricing_enabled');
-    register_setting('woosync_group', 'woosync_default_markup');
-    register_setting('woosync_group', 'woosync_role_markups');
-    register_setting('woosync_group', 'woosync_user_markups');
-    register_setting('woosync_group', 'woosync_minimum_margin');
-    register_setting('woosync_group', 'woosync_maximum_discount');
-    register_setting('woosync_group', 'woosync_clearance_minimum');
-    register_setting('woosync_group', 'woosync_show_pricing_to_logged_out');
+add_action('admin_init', 'amrod_register_settings');
+function amrod_register_settings() {
+    register_setting('amrod_sync_group', 'amrod_username');
+    register_setting('amrod_sync_group', 'amrod_password');
+    register_setting('amrod_sync_group', 'amrod_customer_code');
+    register_setting('amrod_sync_group', 'amrod_auth_url');
+    register_setting('amrod_sync_group', 'amrod_api_url');
+    register_setting('amrod_sync_group', 'amrod_docs_url');
+    register_setting('amrod_sync_group', 'amrod_endpoints');
+    register_setting('amrod_sync_group', 'amrod_field_mapping');
+    register_setting('amrod_sync_group', 'amrod_sync_schedule');
+    register_setting('amrod_sync_group', 'amrod_batch_size');
+    register_setting('amrod_sync_group', 'amrod_auto_update');
+    register_setting('amrod_sync_group', 'woosync_markup_percent');
+    register_setting('amrod_sync_group', 'woosync_vendors');
 }
 
-// ===== VENDOR LIBRARY - PRE-BUILT TEMPLATES =====
-function woosync_get_vendor_templates() {
+// ===== DEFAULT ENDPOINTS =====
+function amrod_get_default_endpoints() {
+    return [
+        'products' => ['label' => 'Products', 'path' => '/api/v1/Products/', 'enabled' => 1],
+        'products_updated' => ['label' => 'Products (Updated)', 'path' => '/api/v1/Products/GetUpdatedProducts', 'enabled' => 0],
+        'products_branding' => ['label' => 'Products with Branding', 'path' => '/api/v1/Products/GetProductsAndBranding', 'enabled' => 0],
+        'products_updated_branding' => ['label' => 'Products Updated with Branding', 'path' => '/api/v1/Products/GetUpdatedProductsAndBranding', 'enabled' => 0],
+        'stock' => ['label' => 'Stock', 'path' => '/api/v1/Stock/', 'enabled' => 0],
+        'stock_updated' => ['label' => 'Stock (Updated)', 'path' => '/api/v1/Stock/GetUpdated', 'enabled' => 0],
+        'prices' => ['label' => 'Prices', 'path' => '/api/v1/Prices/', 'enabled' => 0],
+        'prices_updated' => ['label' => 'Prices (Updated)', 'path' => '/api/v1/Prices/GetUpdated', 'enabled' => 0],
+        'categories' => ['label' => 'Categories', 'path' => '/api/v1/Categories/', 'enabled' => 0],
+        'categories_updated' => ['label' => 'Categories (Updated)', 'path' => '/api/v1/Categories/GetUpdated', 'enabled' => 0],
+        'brands' => ['label' => 'Brands', 'path' => '/api/v1/Brands/', 'enabled' => 0],
+        'brands_updated' => ['label' => 'Brands (Updated)', 'path' => '/api/v1/Brands/GetUpdated', 'enabled' => 0],
+        'branding_depts' => ['label' => 'Branding Departments', 'path' => '/api/v1/BrandingDepartments/', 'enabled' => 0],
+        'branding_depts_updated' => ['label' => 'Branding Departments (Updated)', 'path' => '/api/v1/BrandingDepartments/GetUpdated', 'enabled' => 0],
+        'inclusive_brandings' => ['label' => 'Inclusive Brandings', 'path' => '/api/v1/InclusiveBrandings/', 'enabled' => 0],
+        'inclusive_brandings_updated' => ['label' => 'Inclusive Brandings (Updated)', 'path' => '/api/v1/InclusiveBrandings/GetUpdated', 'enabled' => 0],
+        'branding_prices' => ['label' => 'Branding Prices', 'path' => '/api/v1/BrandingPrices/', 'enabled' => 0],
+        'branding_prices_updated' => ['label' => 'Branding Prices (Updated)', 'path' => '/api/v1/BrandingPrices/GetUpdated', 'enabled' => 0],
+        'colour_swatches' => ['label' => 'Colour Swatches', 'path' => '/api/v1/ColourSwatches/', 'enabled' => 0],
+        'colour_groups' => ['label' => 'Colour Groups', 'path' => '/api/v1/ColourSwatches/GetGrouping', 'enabled' => 0],
+    ];
+}
+
+// ===== AUTO-MAPPING FIELD RULES =====
+function amrod_get_field_mapping_rules() {
+    return [
+        'sku' => ['patterns' => ['ProductCode', 'ItemCode', 'SKU', 'ArticeCode', 'ArticleCode', 'ProductId', 'ItemId'], 'confidence' => 100, 'description' => 'Unique product identifier'],
+        'name' => ['patterns' => ['Description', 'ProductName', 'Name', 'Title', 'ProductDescription', 'ItemDescription'], 'confidence' => 100, 'description' => 'Product name/title'],
+        'price' => ['patterns' => ['Price', 'UnitPrice', 'BasePrice', 'SellingPrice', 'ListPrice'], 'confidence' => 100, 'description' => 'Regular price'],
+        'sale_price' => ['patterns' => ['SalePrice', 'DiscountPrice', 'SpecialPrice', 'PromoPrice', 'OfferPrice', 'ReducedPrice', 'SaleAmount'], 'confidence' => 90, 'description' => 'Sale/discounted price'],
+        'description' => ['patterns' => ['LongDescription', 'Description', 'ProductDetails', 'Details', 'LongDesc', 'FullDescription'], 'confidence' => 100, 'description' => 'Full product description'],
+        'short_description' => ['patterns' => ['ShortDescription', 'Summary', 'Excerpt', 'BriefDescription', 'Teaser'], 'confidence' => 80, 'description' => 'Short product summary'],
+        'categories' => ['patterns' => ['CategoryName', 'Category', 'Categories', 'ProductCategory', 'CategoryPath', 'CategoryHierarchy', 'ProductGroup', 'GroupName', 'Collection'], 'confidence' => 100, 'description' => 'Product categories'],
+        'brand' => ['patterns' => ['Brand', 'BrandName', 'Manufacturer', 'Make', 'Producer', 'Supplier', 'Vendor', 'BrandCode'], 'confidence' => 95, 'description' => 'Product brand/manufacturer'],
+        'colour' => ['patterns' => ['Colour', 'Color', 'ColourSwatch', 'Swatch', 'SwatchName', 'ColourName', 'ColorName', 'ProductColor'], 'confidence' => 90, 'description' => 'Product colour attribute'],
+        'size' => ['patterns' => ['Size', 'Dimensions', 'Dimension', 'Length', 'Width', 'Height', 'Weight', 'Capacity'], 'confidence' => 70, 'description' => 'Product size/dimensions'],
+        'stock' => ['patterns' => ['Stock', 'StockLevel', 'Quantity', 'Qty', 'Available', 'AvailableStock', 'InStock', 'StockStatus'], 'confidence' => 90, 'description' => 'Stock quantity'],
+        'image' => ['patterns' => ['ImageURL', 'Image', 'Photo', 'Picture', 'ProductImage', 'MainImage', 'ImageLink', 'ImagePath', 'PhotoURL'], 'confidence' => 95, 'description' => 'Product main image'],
+        'images' => ['patterns' => ['Images', 'ImageURLs', 'Gallery', 'PhotoGallery', 'ImageGallery', 'AdditionalImages'], 'confidence' => 85, 'description' => 'Product image gallery'],
+        'clearance' => ['patterns' => ['Clearance', 'OnSale', 'Liquidate', 'Special', 'Closeout', 'ClearanceFlag', 'IsClearance', 'IsOnSale', 'IsSpecial', 'IsLiquidate', 'ClearanceDeal', 'EndOfLine'], 'confidence' => 95, 'description' => 'Clearance/closeout flag'],
+        'deal_of_day' => ['patterns' => ['DealOfTheDay', 'DealOfTheWeek', 'DailyDeal', 'Featured', 'IsFeatured', 'HotDeal', 'TopDeal', 'SpecialDeal', 'IsDeal'], 'confidence' => 90, 'description' => 'Deal of the day/week flag'],
+        'banner_image' => ['patterns' => ['BannerImage', 'HeroImage', 'MarketingImage', 'PromoImage', 'BannerImageURL', 'HeroBanner', 'SpotlightImage', 'AdImage'], 'confidence' => 85, 'description' => 'Marketing banner/hero image'],
+        'catalog_pdf' => ['patterns' => ['CatalogPDF', 'BrochureURL', 'Catalogue', 'CatalogURL', 'CataloguePDF', 'PDFLink', 'Brochure', 'Leaflet', 'ProductPDF', 'FactSheet'], 'confidence' => 80, 'description' => 'Product catalog PDF URL'],
+        'special_message' => ['patterns' => ['SpecialMessage', 'PromoMessage', 'MarketingMessage', 'OfferMessage', 'DealMessage', 'Tagline', 'PromoText', 'SpecialText'], 'confidence' => 75, 'description' => 'Special/marketing message'],
+        'sort_order' => ['patterns' => ['SortOrder', 'Sort', 'DisplayOrder', 'Priority', 'Rank', 'Position', 'Sequence', 'OrderBy'], 'confidence' => 60, 'description' => 'Product display sort order'],
+    ];
+}
+
+
+// ===== VENDOR TEMPLATES WITH SUPPORT DATA =====
+function amrod_get_vendor_templates() {
     return [
         'amrod' => [
+            'id' => 'amrod',
             'name' => 'Amrod',
-            'slug' => 'amrod',
-            'description' => 'Amrod promotional merchandise and branded items',
-            'logo' => '',
-            'auth_type' => 'vendor_login',
+            'icon' => '🏭',
+            'description' => 'Premium branded merchandise supplier with full API access for products, stock, pricing, and branding.',
             'auth_url' => 'https://identity.amrod.co.za',
-            'api_url' => 'https://vendorapi.amrod.co.za',
+            'api_base_url' => 'https://vendorapi.amrod.co.za',
             'docs_url' => 'https://newapidocs.amrod.co.za',
-            'auth_payload_fields' => ['username', 'password', 'CustomerCode'],
-            'endpoints' => [
-                'products' => ['label' => 'Products', 'path' => '/api/v1/Products/', 'enabled' => 1],
-                'products_updated' => ['label' => 'Products (Updated)', 'path' => '/api/v1/Products/GetUpdatedProducts', 'enabled' => 0],
-                'products_branding' => ['label' => 'Products with Branding', 'path' => '/api/v1/Products/GetProductsAndBranding', 'enabled' => 0],
-                'products_updated_branding' => ['label' => 'Products Updated with Branding', 'path' => '/api/v1/Products/GetUpdatedProductsAndBranding', 'enabled' => 0],
-                'stock' => ['label' => 'Stock', 'path' => '/api/v1/Stock/', 'enabled' => 0],
-                'stock_updated' => ['label' => 'Stock (Updated)', 'path' => '/api/v1/Stock/GetUpdated', 'enabled' => 0],
-                'prices' => ['label' => 'Prices', 'path' => '/api/v1/Prices/', 'enabled' => 0],
-                'prices_updated' => ['label' => 'Prices (Updated)', 'path' => '/api/v1/Prices/GetUpdated', 'enabled' => 0],
-                'categories' => ['label' => 'Categories', 'path' => '/api/v1/Categories/', 'enabled' => 0],
-                'brands' => ['label' => 'Brands', 'path' => '/api/v1/Brands/', 'enabled' => 0],
-                'colour_swatches' => ['label' => 'Colour Swatches', 'path' => '/api/v1/ColourSwatches/', 'enabled' => 0],
+            'support' => [
+                'email' => 'support@amrod.co.za',
+                'docs_url' => 'https://newapidocs.amrod.co.za',
+                'phone' => '',
+                'address' => '',
             ],
-            'field_mapping_template' => [
-                'sku' => 'ProductCode',
-                'name' => 'Description',
-                'price' => 'Price',
-                'description' => 'LongDescription',
-                'colour' => 'Colour',
-                'brand' => 'Brand',
-                'weight' => 'Weight',
-                'dimensions' => 'Dimensions',
-                'stock' => 'Stock',
-                'images' => 'Images',
-                'categories' => 'Category',
-                'sale_price' => 'SalePrice',
-                'min_quantity' => 'MinQuantity',
-                'price_breaks' => 'PriceBreaks'
-            ],
-            'detected_fields' => ['ProductCode', 'Description', 'Price', 'LongDescription', 'Colour', 'Brand', 'Weight', 'Dimensions', 'Stock', 'Images', 'Category', 'SalePrice', 'MinQuantity', 'PriceBreaks']
         ],
         'barron' => [
+            'id' => 'barron',
             'name' => 'Barron',
-            'slug' => 'barron',
-            'description' => 'Barron custom apparel and corporate wear',
-            'logo' => '',
-            'auth_type' => 'api_key',
-            'auth_url' => 'https://api.barron.co.za',
-            'api_url' => 'https://api.barron.co.za',
-            'docs_url' => 'https://developer.barron.co.za',
-            'auth_payload_fields' => ['api_key'],
-            'endpoints' => [
-                'products' => ['label' => 'Products', 'path' => '/v1/products', 'enabled' => 1],
-                'products_updated' => ['label' => 'Products (Updated)', 'path' => '/v1/products/changes', 'enabled' => 0],
-                'inventory' => ['label' => 'Inventory', 'path' => '/v1/inventory', 'enabled' => 0],
-                'categories' => ['label' => 'Categories', 'path' => '/v1/categories', 'enabled' => 0],
+            'icon' => '🏢',
+            'description' => 'Corporate clothing and workwear supplier.',
+            'auth_url' => '',
+            'api_base_url' => '',
+            'docs_url' => '',
+            'support' => [
+                'email' => '',
+                'docs_url' => '',
+                'phone' => '',
+                'address' => '',
             ],
-            'field_mapping_template' => [
-                'sku' => 'item_code',
-                'name' => 'product_name',
-                'price' => 'unit_price',
-                'description' => 'product_description',
-                'colour' => 'color',
-                'size' => 'size',
-                'brand' => 'brand_name',
-                'weight' => 'weight_kg',
-                'stock' => 'quantity_available',
-                'images' => 'image_urls',
-                'categories' => 'product_category'
-            ],
-            'detected_fields' => ['item_code', 'product_name', 'unit_price', 'product_description', 'color', 'size', 'brand_name', 'weight_kg', 'quantity_available', 'image_urls', 'product_category']
         ],
-        'giftwrap' => [
-            'name' => 'Giftwrap',
-            'slug' => 'giftwrap',
-            'description' => 'Giftwrap corporate gifting and promotional packs',
-            'logo' => '',
-            'auth_type' => 'bearer_token',
-            'auth_url' => 'https://api.giftwrap.co.za',
-            'api_url' => 'https://api.giftwrap.co.za',
-            'docs_url' => 'https://docs.giftwrap.co.za',
-            'auth_payload_fields' => ['client_id', 'client_secret'],
-            'endpoints' => [
-                'products' => ['label' => 'Products', 'path' => '/api/products', 'enabled' => 1],
-                'products_updated' => ['label' => 'Products (Updated)', 'path' => '/api/products/since', 'enabled' => 0],
-                'pricing' => ['label' => 'Pricing', 'path' => '/api/pricing', 'enabled' => 0],
+        'smd' => [
+            'id' => 'smd',
+            'name' => 'SMD',
+            'icon' => '📦',
+            'description' => 'Promotional products and branded giveaways with Bearer Token + ClientAccessKey authentication.',
+            'auth_url' => '',
+            'api_base_url' => 'https://api.smdtechnologies.com/v1/',
+            'docs_url' => '',
+            'auth_type' => 'bearer_key',
+            'support' => [
+                'email' => '(in progress — contact SMD directly)',
+                'docs_url' => '(in progress)',
+                'phone' => '',
+                'address' => '',
             ],
-            'field_mapping_template' => [
-                'sku' => 'SKU',
-                'name' => 'Title',
-                'price' => 'CostPrice',
-                'description' => 'Details',
-                'weight' => 'Weight',
-                'stock' => 'QtyInStock',
-                'images' => 'ImageGallery',
-                'categories' => 'Collection'
-            ],
-            'detected_fields' => ['SKU', 'Title', 'CostPrice', 'Details', 'Weight', 'QtyInStock', 'ImageGallery', 'Collection']
-        ]
+        ],
     ];
 }
 
-// ===== WOOCOMMERCE FIELD DEFINITIONS =====
-function woosync_get_wc_fields() {
+// ===== VENDOR CREDENTIAL SCHEMAS =====
+// Defines credential fields and auth types per vendor
+function amrod_get_vendor_credential_schemas() {
     return [
-        'sku' => ['label' => 'SKU', 'type' => 'text', 'category' => 'basic'],
-        'name' => ['label' => 'Product Name', 'type' => 'text', 'category' => 'basic'],
-        'price' => ['label' => 'Regular Price', 'type' => 'price', 'category' => 'pricing'],
-        'sale_price' => ['label' => 'Sale Price', 'type' => 'price', 'category' => 'pricing'],
-        'description' => ['label' => 'Description', 'type' => 'textarea', 'category' => 'basic'],
-        'short_description' => ['label' => 'Short Description', 'type' => 'textarea', 'category' => 'basic'],
-        'stock' => ['label' => 'Stock Quantity', 'type' => 'number', 'category' => 'inventory'],
-        'stock_status' => ['label' => 'Stock Status', 'type' => 'select', 'category' => 'inventory'],
-        'weight' => ['label' => 'Weight', 'type' => 'text', 'category' => 'shipping'],
-        'dimensions' => ['label' => 'Dimensions (L×W×H)', 'type' => 'text', 'category' => 'shipping'],
-        'images' => ['label' => 'Images', 'type' => 'images', 'category' => 'media'],
-        'categories' => ['label' => 'Categories', 'type' => 'categories', 'category' => 'organization'],
-        'tags' => ['label' => 'Tags', 'type' => 'text', 'category' => 'organization'],
-        'brand' => ['label' => 'Brand', 'type' => 'text', 'category' => 'attributes'],
-        'colour' => ['label' => 'Colour Attribute', 'type' => 'attribute', 'category' => 'attributes'],
-        'size' => ['label' => 'Size Attribute', 'type' => 'attribute', 'category' => 'attributes'],
-        'min_quantity' => ['label' => 'Minimum Quantity', 'type' => 'number', 'category' => 'pricing'],
-        'price_breaks' => ['label' => 'Price Breaks', 'type' => 'json', 'category' => 'pricing'],
-        'variants' => ['label' => 'Variants', 'type' => 'variants', 'category' => 'product_type'],
-        'status' => ['label' => 'Product Status', 'type' => 'select', 'category' => 'basic'],
-        'catalog_visibility' => ['label' => 'Catalog Visibility', 'type' => 'select', 'category' => 'basic'],
-        'tax_status' => ['label' => 'Tax Status', 'type' => 'select', 'category' => 'pricing'],
-        'tax_class' => ['label' => 'Tax Class', 'type' => 'select', 'category' => 'pricing'],
-        'manage_stock' => ['label' => 'Manage Stock', 'type' => 'checkbox', 'category' => 'inventory'],
-        'featured' => ['label' => 'Featured', 'type' => 'checkbox', 'category' => 'basic'],
-        'meta' => ['label' => 'Custom Meta Field', 'type' => 'meta', 'category' => 'advanced']
+        'amrod' => [
+            'auth_type' => 'vendor_login',
+            'label' => 'Amrod Vendor Login',
+            'description' => 'Uses Amrod's VendorLogin endpoint with username, password, and customer code.',
+            'fields' => [
+                [
+                    'key' => 'auth_url',
+                    'label' => 'Auth URL',
+                    'placeholder' => 'https://identity.amrod.co.za',
+                    'prefill' => 'https://identity.amrod.co.za',
+                    'required' => true,
+                    'type' => 'url',
+                    'help' => 'Amrod identity/authentication endpoint URL',
+                ],
+                [
+                    'key' => 'username',
+                    'label' => 'Username *',
+                    'placeholder' => 'user@email.com',
+                    'required' => true,
+                    'type' => 'text',
+                    'help' => 'Your Amrod API username (same as login email)',
+                ],
+                [
+                    'key' => 'password',
+                    'label' => 'Password *',
+                    'placeholder' => '••••••••',
+                    'required' => true,
+                    'type' => 'password',
+                    'help' => 'Your Amrod API password',
+                ],
+                [
+                    'key' => 'customer_code',
+                    'label' => 'Customer Code *',
+                    'placeholder' => 'e.g., MEDIAPLATFORM',
+                    'required' => true,
+                    'type' => 'text',
+                    'help' => 'Your Amrod customer code. Find it in your Amrod account or contact support.',
+                ],
+            ],
+            'support' => [
+                'email' => 'support@amrod.co.za',
+                'docs' => 'https://newapidocs.amrod.co.za',
+                'note' => 'Your customer code is in your Amrod account. Contact support@amrod.co.za if you don't have one.',
+            ],
+            'test_type' => 'vendor_login',
+        ],
+        'smd' => [
+            'auth_type' => 'bearer_key',
+            'label' => 'SMD Bearer Token',
+            'description' => 'Uses SMD API with Bearer Token + ClientAccessKey authentication.',
+            'fields' => [
+                [
+                    'key' => 'api_base_url',
+                    'label' => 'API Base URL *',
+                    'placeholder' => 'https://api.smdtechnologies.com/v1/',
+                    'prefill' => 'https://api.smdtechnologies.com/v1/',
+                    'required' => true,
+                    'type' => 'url',
+                    'help' => 'SMD API base URL',
+                ],
+                [
+                    'key' => 'bearer_token',
+                    'label' => 'Bearer Token *',
+                    'placeholder' => 'Your API token from SMD',
+                    'required' => true,
+                    'type' => 'password',
+                    'help' => 'Your SMD API Bearer Token. Contact SMD to get this.',
+                ],
+                [
+                    'key' => 'client_access_key',
+                    'label' => 'Client Access Key *',
+                    'placeholder' => 'Your ClientAccessKey from SMD',
+                    'required' => true,
+                    'type' => 'password',
+                    'help' => 'Your SMD ClientAccessKey. Contact SMD to get this.',
+                ],
+            ],
+            'support' => [
+                'email' => '(in progress — contact SMD directly)',
+                'docs' => '(in progress)',
+                'note' => 'SMD uses a Bearer Token + ClientAccessKey. You'll receive these via email from SMD.',
+            ],
+            'test_type' => 'bearer_key',
+        ],
+        'barron' => [
+            'auth_type' => 'custom',
+            'label' => 'Barron Custom Auth',
+            'description' => 'Barron uses custom authentication. Contact Barron for API credentials.',
+            'fields' => [
+                [
+                    'key' => 'api_base_url',
+                    'label' => 'API Base URL *',
+                    'placeholder' => 'https://api.barron.com/v1/',
+                    'required' => true,
+                    'type' => 'url',
+                    'help' => 'Barron API base URL',
+                ],
+                [
+                    'key' => 'api_key',
+                    'label' => 'API Key (optional)',
+                    'placeholder' => 'Your Barron API key',
+                    'required' => false,
+                    'type' => 'password',
+                    'help' => 'Your Barron API key (if required)',
+                ],
+            ],
+            'support' => [
+                'email' => '(in progress — contact Barron directly)',
+                'docs' => '(in progress)',
+                'note' => 'Contact Barron directly for API credentials and documentation.',
+            ],
+            'test_type' => 'custom',
+        ],
+        'custom' => [
+            'auth_type' => 'custom',
+            'label' => 'Custom Vendor',
+            'description' => 'Configure any REST API. Fill in only the fields your API requires.',
+            'fields' => [
+                [
+                    'key' => 'api_base_url',
+                    'label' => 'API Base URL *',
+                    'placeholder' => 'https://api.example.com/v1/',
+                    'required' => true,
+                    'type' => 'url',
+                    'help' => 'Base URL for your vendor's API',
+                ],
+                [
+                    'key' => 'auth_url',
+                    'label' => 'Auth URL (optional)',
+                    'placeholder' => 'https://auth.example.com/token',
+                    'required' => false,
+                    'type' => 'url',
+                    'help' => 'Authentication endpoint URL (if separate from API)',
+                ],
+                [
+                    'key' => 'username',
+                    'label' => 'Username (optional)',
+                    'placeholder' => 'user@email.com',
+                    'required' => false,
+                    'type' => 'text',
+                    'help' => 'API username (if using basic/vendor login auth)',
+                ],
+                [
+                    'key' => 'password',
+                    'label' => 'Password (optional)',
+                    'placeholder' => '••••••••',
+                    'required' => false,
+                    'type' => 'password',
+                    'help' => 'API password (if using basic/vendor login auth)',
+                ],
+                [
+                    'key' => 'bearer_token',
+                    'label' => 'Bearer Token (optional)',
+                    'placeholder' => 'Your bearer token',
+                    'required' => false,
+                    'type' => 'password',
+                    'help' => 'Bearer token for API authentication',
+                ],
+                [
+                    'key' => 'api_key',
+                    'label' => 'API Key (optional)',
+                    'placeholder' => 'Your API key',
+                    'required' => false,
+                    'type' => 'password',
+                    'help' => 'Static API key (if required by your vendor)',
+                ],
+                [
+                    'key' => 'customer_code',
+                    'label' => 'Customer Code (optional)',
+                    'placeholder' => 'e.g., MEDIAPLATFORM',
+                    'required' => false,
+                    'type' => 'text',
+                    'help' => 'Customer/vendor code (if required by your vendor)',
+                ],
+            ],
+            'support' => [
+                'email' => '',
+                'docs' => '',
+                'note' => 'Fill in only the fields your API requires. Leave optional fields empty.',
+            ],
+            'test_type' => 'custom',
+        ],
     ];
 }
 
-// ===== SMART AUTO-MAPPING SYSTEM =====
-function woosync_detect_api_fields($sample_data) {
-    if (empty($sample_data) || !is_array($sample_data)) {
-        return [];
-    }
-    
-    // Flatten nested structures for field detection
-    $flat_fields = [];
-    woosync_flatten_array($sample_data, '', $flat_fields);
-    
-    return array_keys($flat_fields);
+// Get credential schema for a specific vendor
+function amrod_get_credential_schema($vendor_id) {
+    $schemas = amrod_get_vendor_credential_schemas();
+    return $schemas[$vendor_id] ?? $schemas['custom'];
 }
 
-function woosync_flatten_array($array, $prefix, &$result) {
-    foreach ($array as $key => $value) {
-        $new_key = $prefix ? "{$prefix}.{$key}" : $key;
-        
-        if (is_array($value) && !empty($value)) {
-            // Check if it's a simple array of primitives (like images URLs)
-            if (woosync_is_primitive_array($value)) {
-                $result[$new_key] = $value;
-            } else {
-                woosync_flatten_array($value, $new_key, $result);
-            }
-        } else {
-            $result[$new_key] = $value;
-        }
-    }
-}
 
-function woosync_is_primitive_array($array) {
-    if (!is_array($array) || empty($array)) return false;
-    foreach ($array as $item) {
-        if (is_array($item)) return false;
-    }
-    return true;
-}
 
-function woosync_fuzzy_match_fields($api_fields, $wc_fields) {
-    $mappings = [];
+// ===== SIMPLIFIED TAB STATUS =====
+function amrod_get_simplified_status() {
+    $connected = !empty(get_option('amrod_username')) && !empty(get_option('amrod_password'));
+    $has_mapping = !empty(get_option('amrod_field_mapping'));
+    $last_sync = get_option('amrod_last_sync');
     
-    // Normalize and create lookup arrays
-    $api_normalized = [];
-    foreach ($api_fields as $field) {
-        $api_normalized[strtolower($field)] = $field;
-    }
-    
-    $wc_normalized = [];
-    foreach ($wc_fields as $key => $config) {
-        $wc_normalized[strtolower($config['label'])] = $key;
-    }
-    
-    // Direct matches (high confidence)
-    foreach ($api_normalized as $api_lower => $api_original) {
-        foreach ($wc_normalized as $wc_lower => $wc_key) {
-            if ($api_lower === $wc_lower) {
-                $mappings[$wc_key] = [
-                    'api_field' => $api_original,
-                    'confidence' => 'high',
-                    'match_type' => 'exact'
-                ];
-            }
-        }
-    }
-    
-    // Fuzzy matches (medium confidence)
-    $fuzzy_patterns = [
-        // SKU variations
-        ['patterns' => ['productcode', 'itemcode', 'item_code', 'product_code', 'code', 'itemno', 'item_no', 'productid', 'product_id', 'sku', 'articleno', 'article_no'], 'wc_key' => 'sku'],
-        // Name variations
-        ['patterns' => ['description', 'name', 'productname', 'product_name', 'title', 'producttitle', 'product_title', 'itemname', 'item_name', 'product'], 'wc_key' => 'name'],
-        // Price variations
-        ['patterns' => ['price', 'unitprice', 'unit_price', 'costprice', 'cost_price', 'baseprice', 'base_price', 'sellingprice', 'selling_price', 'amount'], 'wc_key' => 'price'],
-        // Sale price variations
-        ['patterns' => ['saleprice', 'sale_price', 'specialprice', 'special_price', 'discountprice', 'discount_price', 'offerprice', 'offer_price'], 'wc_key' => 'sale_price'],
-        // Description variations
-        ['patterns' => ['longdescription', 'long_description', 'description', 'productdescription', 'product_description', 'details', 'productdetails', 'product_details', 'info'], 'wc_key' => 'description'],
-        // Short description variations
-        ['patterns' => ['shortdescription', 'short_description', 'summary', 'excerpt', 'brief'], 'wc_key' => 'short_description'],
-        // Colour variations
-        ['patterns' => ['colour', 'color', 'colourname', 'colour_name', 'colorname', 'color_name'], 'wc_key' => 'colour'],
-        // Size variations
-        ['patterns' => ['size', 'sizename', 'size_name'], 'wc_key' => 'size'],
-        // Brand variations
-        ['patterns' => ['brand', 'brandname', 'brand_name', 'make', 'manufacturer'], 'wc_key' => 'brand'],
-        // Weight variations
-        ['patterns' => ['weight', 'weightkg', 'weight_kg', 'weightlbs', 'weight_lbs', 'mass'], 'wc_key' => 'weight'],
-        // Dimensions variations
-        ['patterns' => ['dimensions', 'size', 'measurements', 'length', 'width', 'height', 'depth'], 'wc_key' => 'dimensions'],
-        // Stock variations
-        ['patterns' => ['stock', 'quantity', 'qty', 'available', 'instock', 'in_stock', 'stocklevel', 'stock_level', 'qtyavailable', 'qty_available'], 'wc_key' => 'stock'],
-        // Images variations
-        ['patterns' => ['images', 'image', 'imageurl', 'image_url', 'imageurls', 'image_urls', 'photos', 'picture', 'pictures', 'gallery'], 'wc_key' => 'images'],
-        // Categories variations
-        ['patterns' => ['category', 'categories', 'productcategory', 'product_category', 'collection', 'type', 'clas'], 'wc_key' => 'categories'],
-        // Min quantity variations
-        ['patterns' => ['minquantity', 'min_quantity', 'minimum', 'minorder', 'min_order', 'moq'], 'wc_key' => 'min_quantity'],
-        // Price breaks variations
-        ['patterns' => ['pricebreaks', 'price_breaks', 'volumepricing', 'volume_pricing', 'tierprice', 'tier_price', 'pricingtiers'], 'wc_key' => 'price_breaks'],
-        // Tags variations
-        ['patterns' => ['tags', 'keywords', 'labels'], 'wc_key' => 'tags'],
+    return [
+        'connected' => $connected,
+        'has_mapping' => $has_mapping,
+        'last_sync' => $last_sync,
+        'sync_status' => $last_sync ? 'green' : 'yellow',
+        'connection_status' => $connected ? 'green' : 'red',
     ];
-    
-    foreach ($fuzzy_patterns as $pattern_group) {
-        foreach ($api_normalized as $api_lower => $api_original) {
-            foreach ($pattern_group['patterns'] as $pattern) {
-                if (strpos($api_lower, $pattern) !== false || $api_lower === $pattern) {
-                    $wc_key = $pattern_group['wc_key'];
-                    // Skip if already mapped with higher confidence
-                    if (!isset($mappings[$wc_key]) || $mappings[$wc_key]['confidence'] !== 'high') {
-                        $mappings[$wc_key] = [
-                            'api_field' => $api_original,
-                            'confidence' => 'medium',
-                            'match_type' => 'fuzzy'
-                        ];
-                    }
-                }
-            }
-        }
-    }
-    
-    return $mappings;
 }
 
-function woosync_get_confidence_label($confidence) {
-    $labels = [
-        'high' => ['label' => 'High', 'class' => 'success', 'icon' => '✅'],
-        'medium' => ['label' => 'Medium', 'class' => 'warning', 'icon' => '⚠️'],
-        'low' => ['label' => 'Low', 'class' => 'danger', 'icon' => '❌']
-    ];
-    return $labels[$confidence] ?? $labels['low'];
-}
-
-// ===== VENDOR MANAGEMENT =====
-function woosync_get_vendors() {
-    $vendors = get_option('woosync_vendors', []);
-    return is_array($vendors) ? $vendors : [];
-}
-
-function woosync_get_active_vendor() {
-    $active_id = get_option('woosync_active_vendor', '');
-    $vendors = woosync_get_vendors();
-    
-    foreach ($vendors as $vendor) {
-        if ($vendor['id'] === $active_id) {
-            return $vendor;
-        }
-    }
-    
-    // Return first vendor if active not found
-    return !empty($vendors) ? $vendors[0] : null;
-}
-
-function woosync_get_vendor_by_id($vendor_id) {
-    $vendors = woosync_get_vendors();
-    
-    foreach ($vendors as $vendor) {
-        if ($vendor['id'] === $vendor_id) {
-            return $vendor;
-        }
-    }
-    
-    return null;
-}
-
-function woosync_save_vendor($vendor_data) {
-    $vendors = woosync_get_vendors();
-    $is_new = !isset($vendor_data['id']) || empty($vendor_data['id']);
-    
-    if ($is_new) {
-        // Generate unique ID
-        $vendor_data['id'] = sanitize_key($vendor_data['slug'] . '_' . time());
-        $vendor_data['created_at'] = current_time('mysql');
-    }
-    
-    $vendor_data['updated_at'] = current_time('mysql');
-    
-    if ($is_new) {
-        $vendors[] = $vendor_data;
-    } else {
-        foreach ($vendors as $key => $v) {
-            if ($v['id'] === $vendor_data['id']) {
-                $vendors[$key] = $vendor_data;
-                break;
-            }
-        }
-    }
-    
-    update_option('woosync_vendors', $vendors);
-    
-    // Set as active if first vendor
-    if (count($vendors) === 1) {
-        update_option('woosync_active_vendor', $vendor_data['id']);
-    }
-    
-    return $vendor_data;
-}
-
-function woosync_delete_vendor($vendor_id) {
-    $vendors = woosync_get_vendors();
-    
-    foreach ($vendors as $key => $vendor) {
-        if ($vendor['id'] === $vendor_id) {
-            unset($vendors[$key]);
-            break;
-        }
-    }
-    
-    update_option('woosync_vendors', array_values($vendors));
-    
-    // Update active vendor if needed
-    $active_id = get_option('woosync_active_vendor', '');
-    if ($active_id === $vendor_id) {
-        $remaining = woosync_get_vendors();
-        update_option('woosync_active_vendor', !empty($remaining) ? $remaining[0]['id'] : '');
-    }
-}
-
-function woosync_get_vendor_endpoints($vendor) {
-    if (!empty($vendor['endpoints']) && is_string($vendor['endpoints'])) {
-        $decoded = @json_decode($vendor['endpoints'], true);
-        if (is_array($decoded)) {
-            return $decoded;
-        }
-    }
-    
-    // Return template endpoints if available
-    $templates = woosync_get_vendor_templates();
-    $slug = $vendor['slug'] ?? '';
-    
-    if (isset($templates[$slug])) {
-        return $templates[$slug]['endpoints'];
-    }
-    
-    return [];
-}
-
-function woosync_get_vendor_field_mapping($vendor) {
-    if (!empty($vendor['field_mapping']) && is_string($vendor['field_mapping'])) {
-        $decoded = @json_decode($vendor['field_mapping'], true);
-        if (is_array($decoded)) {
-            return $decoded;
-        }
-    }
-    
-    // Return template mapping if available
-    $templates = woosync_get_vendor_templates();
-    $slug = $vendor['slug'] ?? '';
-    
-    if (isset($templates[$slug])) {
-        return $templates[$slug]['field_mapping_template'];
-    }
-    
-    return [];
-}
-
-// ===== ADMIN MENU =====
-add_action('admin_menu', 'woosync_register_menus');
-function woosync_register_menus() {
+// ===== ADMIN MENU - CLEAN 4-TAB LAYOUT =====
+add_action('admin_menu', 'amrod_register_simplified_menus');
+function amrod_register_simplified_menus() {
     if (!class_exists('WooCommerce')) return;
-
-    $active_vendor = woosync_get_active_vendor();
-    $sync_status = !empty(get_option('woosync_last_sync')) ? '✅' : '❌';
     
+    // Main menu: WooSync (Dashboard)
     add_menu_page(
         'WooSync',
-        'WooSync ' . $sync_status,
+        'WooSync',
         'manage_options',
-        'woosync',
-        'woosync_render_main_page',
+        'amrod-sync',
+        'amrod_render_main_page',
         'dashicons-update',
         56
     );
 
+    // Submenu: Dashboard
     add_submenu_page(
-        'woosync',
+        'amrod-sync',
         'Dashboard',
-        'Dashboard',
+        '1. Dashboard',
         'manage_options',
-        'woosync',
-        'woosync_render_main_page'
+        'amrod-sync',
+        'amrod_render_main_page'
     );
-    
+
+    // Submenu: Connect & Map
     add_submenu_page(
-        'woosync',
-        'Vendors',
-        'Vendors',
+        'amrod-sync',
+        'Connect & Map',
+        '2. Connect & Map',
         'manage_options',
-        'woosync-vendors',
-        'woosync_render_vendors_page'
+        'amrod-sync-connect',
+        'amrod_render_connect_map_page'
     );
-    
+
+    // Submenu: Sync Log
     add_submenu_page(
-        'woosync',
+        'amrod-sync',
         'Sync Log',
-        'Sync Log',
+        '3. Sync Log',
         'manage_options',
-        'woosync-log',
-        'woosync_render_log_page'
+        'amrod-sync-log',
+        'amrod_render_sync_log_page'
     );
-    
+
+    // Submenu: Settings (includes Promotions, Pricing, Promo Share as sub-tabs)
     add_submenu_page(
-        'woosync',
-        'Promotions',
-        'Promotions',
+        'amrod-sync',
+        'Settings',
+        '4. Settings',
         'manage_options',
-        'woosync-promotions',
-        'woosync_render_promotions_page'
+        'amrod-sync-settings',
+        'amrod_render_settings_page'
     );
 }
+
+// ===== ACTIVATION HOOK =====
+register_activation_hook(__FILE__, function() {
+    if (!class_exists('WooCommerce')) {
+        deactivate_plugins(plugin_basename(__FILE__));
+        wp_die('Amrod Sync requires WooCommerce to be active.');
+    }
+    set_transient('amrod_activated', 1, HOUR_IN_SECONDS);
+});
 
 // ===== ACTIVATION NOTICE =====
 add_action('admin_notices', function() {
-    if (get_transient('woosync_activated')) {
-        delete_transient('woosync_activated');
-        echo '<div class="alert alert-success alert-dismissible fade show"><strong>✅ WooSync activated!</strong> Connect your first vendor to begin syncing products.</div>';
+    if (get_transient('amrod_activated')) {
+        delete_transient('amrod_activated');
+        echo '<div class="alert alert-success alert-dismissible fade show"><strong>✅ WooSync activated!</strong> Setup your API credentials to begin syncing. <a href="#" onclick="window.resetWooSyncWizard(); return false;">Run Setup Wizard</a></div>';
     }
 });
 
-// ===== MAIN PAGE RENDER =====
-function woosync_render_main_page() {
-    if (!current_user_can('manage_options')) wp_die('Insufficient permissions');
-    
-    $active_tab = $_GET['tab'] ?? 'dashboard';
-    $active_vendor = woosync_get_active_vendor();
-    $vendors = woosync_get_vendors();
-    
-    // Check if first-time setup
-    $wizard_completed = get_option('woosync_wizard_completed', false);
-    $show_wizard = empty($vendors) || !$wizard_completed;
-    
-    if ($show_wizard && !isset($_GET['skip_wizard'])) {
-        woosync_render_onboarding_wizard();
-        return;
+
+// ===== WIZARD TRIGGER ON ACTIVATION =====
+add_action('admin_init', function() {
+    if (get_transient('amrod_activated')) {
+        delete_transient('amrod_activated');
+        // Trigger wizard JS event
+        add_action('admin_footer', function() {
+            echo '<script>jQuery(document).ready(function(){ jQuery(document).trigger("woosync_activate_wizard"); });</script>';
+        });
     }
-    
-    ?>
-    <div class="container-fluid mt-4">
-        <!-- Header -->
-        <div class="woosync-brand-header">
-            <div>
-                <h1 class="mb-0">WooSync</h1>
-                <span class="version">v<?php echo WOOSYNC_VERSION; ?></span>
-                <span class="powered-by">by <a href="https://mediaplatform.co.za" target="_blank" rel="noopener">Mediaplatform</a></span>
-            </div>
-            <div class="d-flex align-items-center gap-3">
-                <?php if ($active_vendor): ?>
-                <div class="badge bg-primary">
-                    Active: <?php echo esc_html($active_vendor['name']); ?>
-                </div>
-                <?php endif; ?>
-                <img src="<?php echo WOOSYNC_ASSETS; ?>images/woosync-logo.svg" height="40" alt="WooSync">
-            </div>
-        </div>
+});
 
-        <!-- Notification Banners -->
-        <?php
-        $notifications_obj = WooSync_Notifications::get_instance();
-        $active_notifications = $notifications_obj->get_active_notifications();
-        foreach ($active_notifications as $id => $notification):
-            if ($notification['type'] === 'banner'):
-        ?>
-        <div class="woosync-notification-banner" data-notification-id="<?php echo esc_attr($id); ?>">
-            <div class="woosync-notification-content">
-                <span class="dashicons <?php echo esc_attr($notification['icon'] ?? 'dashicons-info'); ?>"></span>
-                <div class="woosync-notification-text">
-                    <strong><?php echo esc_html($notification['title'] ?? ''); ?></strong>
-                    <p><?php echo esc_html($notification['message'] ?? ''); ?></p>
-                </div>
-                <?php if (!empty($notification['link'])): ?>
-                <a href="<?php echo esc_url($notification['link']); ?>" class="woosync-notification-cta" target="_blank" rel="noopener">
-                    <?php echo esc_html($notification['cta_text'] ?? 'Learn More'); ?> →
-                </a>
-                <?php endif; ?>
-                <button type="button" class="woosync-notification-dismiss" aria-label="Dismiss">
-                    <span class="dashicons dashicons-dismiss"></span>
-                </button>
-            </div>
-        </div>
-        <?php 
-            endif;
-        endforeach;
-        ?>
 
-        <!-- Quick Stats Row -->
-        <div class="row mb-4">
-            <div class="col-md-3">
-                <div class="card bg-primary text-white">
-                    <div class="card-body">
-                        <h5 class="card-title">Vendors</h5>
-                        <h2><?php echo count($vendors); ?></h2>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card bg-success text-white">
-                    <div class="card-body">
-                        <h5 class="card-title">Total Products</h5>
-                        <h2><?php echo number_format(get_option('woosync_total_products', 0)); ?></h2>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card bg-info text-white">
-                    <div class="card-body">
-                        <h5 class="card-title">Last Sync</h5>
-                        <h6><?php 
-                            $last_sync = get_option('woosync_last_sync');
-                            echo $last_sync ? date('d M @ H:i', strtotime($last_sync)) : 'Never';
-                        ?></h6>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card bg-warning text-dark">
-                    <div class="card-body">
-                        <h5 class="card-title">Sync Status</h5>
-                        <h6 id="syncStatusDisplay">Ready</h6>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Tabs Navigation -->
-        <ul class="nav nav-tabs mb-4" role="tablist">
-            <li class="nav-item">
-                <a class="nav-link <?php echo $active_tab === 'dashboard' ? 'active' : ''; ?>" href="?page=woosync&tab=dashboard">
-                    📊 Dashboard
-                </a>
-            </li>
-            <?php if ($active_vendor): ?>
-            <li class="nav-item">
-                <a class="nav-link <?php echo $active_tab === 'sync' ? 'active' : ''; ?>" href="?page=woosync&tab=sync">
-                    🔄 Sync
-                </a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link <?php echo $active_tab === 'mapping' ? 'active' : ''; ?>" href="?page=woosync&tab=mapping">
-                    🗺️ Field Mapping
-                </a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link <?php echo $active_tab === 'optimizer' ? 'active' : ''; ?>" href="?page=woosync&tab=optimizer">
-                    🚀 Product Optimizer
-                </a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link <?php echo $active_tab === 'settings' ? 'active' : ''; ?>" href="?page=woosync&tab=settings">
-                    ⚙️ Settings
-                </a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link <?php echo $active_tab === 'updates' ? 'active' : ''; ?>" href="?page=woosync&tab=updates">
-                    🔔 Updates
-                </a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link <?php echo $active_tab === 'promo_share' ? 'active' : ''; ?>" href="?page=woosync&tab=promo_share">
-                    📢 Promo Share <span class="promo-share-badge"></span>
-                </a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link <?php echo $active_tab === 'pricing' ? 'active' : ''; ?>" href="?page=woosync&tab=pricing">
-                    💰 Pricing
-                </a>
-            </li>
-            <?php endif; ?>
-        </ul>
-
-        <!-- Tab Content -->
-        <div class="tab-content">
-            <?php
-            if ($active_tab === 'dashboard') woosync_tab_dashboard();
-            elseif ($active_tab === 'sync' && $active_vendor) woosync_tab_sync();
-            elseif ($active_tab === 'mapping' && $active_vendor) woosync_tab_field_mapping();
-            elseif ($active_tab === 'settings' && $active_vendor) woosync_tab_settings();
-            elseif ($active_tab === 'updates') woosync_tab_updates();
-            elseif ($active_tab === 'optimizer' && $active_vendor) woosync_tab_optimizer();
-            elseif ($active_tab === 'promo_share' && $active_vendor) woosync_tab_promo_share();
-            elseif ($active_tab === 'pricing' && $active_vendor) woosync_tab_pricing();
-            else woosync_tab_dashboard();
-            ?>
-        </div>
-    </div>
-
-    <!-- Footer -->
-    <!-- Services from Mediaplatform -->
-        <?php if (get_option('woosync_show_services', true)): ?>
-        <div class="woosync-services-section">
-            <h3><span class="dashicons dashicons-admin-plugins"></span> Services from Mediaplatform</h3>
-            <div class="woosync-services-grid">
-                <?php $notifications_obj->render_services(true); ?>
-            </div>
-            <p class="text-muted small mt-3">
-                <a href="?page=woosync-promotions">Manage Promotions</a> | 
-                <a href="https://mediaplatform.co.za" target="_blank">mediaplatform.co.za</a>
-            </p>
-        </div>
-        <?php endif; ?>
-
-        <div class="text-center text-muted small mt-5 pb-5">
-            <p>© 2026 <a href="https://mediaplatform.co.za" target="_blank">Mediaplatform</a> | WooSync v<?php echo WOOSYNC_VERSION; ?></p>
-        </div>
-    <?php
+// ===== BREADCRUMB HELPER =====
+function amrod_breadcrumb($items) {
+    echo '<nav aria-label="breadcrumb"><ol class="breadcrumb mb-3">';
+    echo '<li class="breadcrumb-item"><a href="?page=amrod-sync">WooSync</a></li>';
+    foreach ($items as $label => $url) {
+        if ($url === false) {
+            echo '<li class="breadcrumb-item active" aria-current="page">' . esc_html($label) . '</li>';
+        } else {
+            echo '<li class="breadcrumb-item"><a href="' . esc_url($url) . '">' . esc_html($label) . '</a></li>';
+        }
+    }
+    echo '</ol></nav>';
 }
 
-// ===== ONBOARDING WIZARD =====
-function woosync_render_onboarding_wizard() {
-    $templates = woosync_get_vendor_templates();
+// ===== MAIN PAGE RENDERER (handles all pages) =====
+function amrod_render_main_page() {
+    $page = $_GET['page'] ?? 'amrod-sync';
+    $status = amrod_get_simplified_status();
+    $last_sync = get_option('amrod_last_sync');
+    $total_products = get_option('amrod_total_products', 0);
+    $last_token_time = get_option('amrod_last_token_fetched');
+    $batch_size = get_option('amrod_batch_size', 200);
+    $auto_update = get_option('amrod_auto_update', 1);
     ?>
-    <div class="container-fluid mt-4">
-        <div class="row justify-content-center">
-            <div class="col-md-10">
+    <div class="container-fluid mt-4 amrod-container">
+        <?php amrod_breadcrumb(['Dashboard' => false]); ?>
+        
+        <!-- Header -->
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h1 class="mb-0">📊 Dashboard</h1>
+                <small class="text-muted">WooSync v<?php echo AMROD_SYNC_VERSION; ?></small>
+            </div>
+            <img src="<?php echo AMROD_SYNC_ASSETS; ?>images/mediaplatform-logo.svg" height="18" alt="Mediaplatform">
+        </div>
+
+        <!-- Quick Stats Cards -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <div class="status-dot <?php echo $status['connection_status']; ?> mb-2"></div>
+                        <h5 class="card-title">API Connection</h5>
+                        <p class="card-text text-muted small"><?php echo $status['connected'] ? 'Connected to Amrod' : 'Not configured'; ?></p>
+                        <a href="?page=amrod-sync-settings" class="btn btn-sm btn-outline-primary">Configure</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <div class="status-dot <?php echo $status['sync_status']; ?> mb-2"></div>
+                        <h5 class="card-title">Last Sync</h5>
+                        <p class="card-text text-muted small"><?php echo $last_sync ? date('d M @ H:i', strtotime($last_sync)) : 'Never synced'; ?></p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <h5 class="card-title"><?php echo number_format($total_products); ?></h5>
+                        <p class="card-text text-muted small">Products Synced</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <h5 class="card-title"><?php echo number_format(get_option('amrod_mapped_fields', 0)); ?></h5>
+                        <p class="card-text text-muted small">Fields Mapped</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="row mb-4">
+            <div class="col-md-8">
                 <div class="card">
                     <div class="card-header bg-primary text-white">
-                        <h5 class="mb-0">🚀 WooSync Setup Wizard</h5>
+                        <h5 class="mb-0">🚀 Quick Sync</h5>
                     </div>
                     <div class="card-body">
-                        <p class="lead">Welcome to WooSync! Let's connect your first supplier.</p>
-                        
-                        <!-- Step Indicators -->
-                        <div class="d-flex justify-content-between mb-4">
-                            <div class="text-center step-indicator active" data-step="1">
-                                <div class="step-circle">1</div>
-                                <div class="step-label">Select Vendor</div>
-                            </div>
-                            <div class="text-center step-indicator" data-step="2">
-                                <div class="step-circle">2</div>
-                                <div class="step-label">Connect</div>
-                            </div>
-                            <div class="text-center step-indicator" data-step="3">
-                                <div class="step-circle">3</div>
-                                <div class="step-label">Auto-Map Fields</div>
-                            </div>
-                            <div class="text-center step-indicator" data-step="4">
-                                <div class="step-circle">4</div>
-                                <div class="step-label">Preview</div>
-                            </div>
-                            <div class="text-center step-indicator" data-step="5">
-                                <div class="step-circle">5</div>
-                                <div class="step-label">Sync</div>
-                            </div>
-                        </div>
-
-                        <form method="post" id="wizardForm">
-                            <?php wp_nonce_field('woosync_wizard'); ?>
-                            
-                            <!-- Step 1: Select Vendor -->
-                            <div class="wizard-step" data-step="1">
-                                <h5>Select Your Supplier</h5>
-                                <p class="text-muted">Choose a pre-configured supplier or add a custom one.</p>
-                                
-                                <div class="row">
-                                    <?php foreach ($templates as $slug => $template): ?>
-                                    <div class="col-md-4 mb-3">
-                                        <div class="card vendor-template-card" data-vendor="<?php echo esc_attr($slug); ?>">
-                                            <div class="card-body text-center">
-                                                <h5><?php echo esc_html($template['name']); ?></h5>
-                                                <p class="text-muted small"><?php echo esc_html($template['description']); ?></p>
-                                                <button type="button" class="btn btn-outline-primary select-vendor-btn" data-vendor="<?php echo esc_attr($slug); ?>">
-                                                    Select
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <?php endforeach; ?>
+                        <form method="post" id="quickSyncForm">
+                            <?php wp_nonce_field('amrod_sync_nonce'); ?>
+                            <div class="row align-items-end">
+                                <div class="col-md-4">
+                                    <label class="form-label">Batch Size <span class="help-icon" data-bs-toggle="tooltip" title="Number of products to sync per batch. Recommended: 200">?</span></label>
+                                    <input type="number" name="batch_size" value="<?php echo $batch_size; ?>" min="50" max="500" class="form-control">
                                 </div>
-                                
-                                <div class="mt-3">
-                                    <button type="button" class="btn btn-secondary" id="addCustomVendorBtn">
-                                        ➕ Add Custom Vendor
-                                    </button>
-                                </div>
-                                
-                                <input type="hidden" name="vendor_template" id="vendorTemplate" value="">
-                                <input type="hidden" name="vendor_name" id="vendorName" value="">
-                                <input type="hidden" name="vendor_slug" id="vendorSlug" value="">
-                            </div>
-
-                            <!-- Step 2: Connect -->
-                            <div class="wizard-step" data-step="2" style="display: none;">
-                                <h5>Connect to <span id="selectedVendorName">Vendor</span></h5>
-                                <p class="text-muted">Enter your API credentials.</p>
-                                
-                                <div class="mb-3">
-                                    <label class="form-label">API Base URL</label>
-                                    <input type="url" name="api_url" id="apiUrl" class="form-control" required>
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label class="form-label">Auth URL</label>
-                                    <input type="url" name="auth_url" id="authUrl" class="form-control" required>
-                                </div>
-                                
-                                <div id="credentialsFields">
-                                    <!-- Dynamic fields based on vendor type -->
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <button type="button" class="btn btn-outline-secondary" id="testConnectionBtn">
-                                        🔗 Test Connection
-                                    </button>
-                                    <span id="connectionStatus"></span>
-                                </div>
-                            </div>
-
-                            <!-- Step 3: Auto-Map Fields -->
-                            <div class="wizard-step" data-step="3" style="display: none;">
-                                <h5>Auto-Detect Field Mapping</h5>
-                                <p class="text-muted">We've detected the fields from your API. Review and adjust the mappings.</p>
-                                
-                                <div id="autoMappingResults" class="table-responsive">
-                                    <table class="table table-bordered">
-                                        <thead class="table-light">
-                                            <tr>
-                                                <th>WooCommerce Field</th>
-                                                <th>API Field</th>
-                                                <th>Confidence</th>
-                                                <th>Sample Value</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="mappingResultsBody">
-                                            <tr>
-                                                <td colspan="4" class="text-center text-muted">
-                                                    Click "Auto-Detect" to analyze your API data
-                                                </td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                                
-                                <button type="button" class="btn btn-primary" id="autoDetectBtn">
-                                    🔍 Auto-Detect Fields
-                                </button>
-                            </div>
-
-                            <!-- Step 4: Preview -->
-                            <div class="wizard-step" data-step="4" style="display: none;">
-                                <h5>Preview Sample Products</h5>
-                                <p class="text-muted">Review how your products will appear in WooCommerce.</p>
-                                
-                                <div id="previewArea" class="table-responsive">
-                                    <table class="table table-sm">
-                                        <thead>
-                                            <tr>
-                                                <th>SKU</th>
-                                                <th>Name</th>
-                                                <th>Price</th>
-                                                <th>Stock</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="previewBody">
-                                            <tr>
-                                                <td colspan="4" class="text-center text-muted">
-                                                    Preview will appear here
-                                                </td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-
-                            <!-- Step 5: Sync -->
-                            <div class="wizard-step" data-step="5" style="display: none;">
-                                <h5>Ready to Sync!</h5>
-                                <p class="text-muted">Your vendor is configured. Run your first sync.</p>
-                                
-                                <div class="mb-3">
+                                <div class="col-md-4">
                                     <label class="form-label">Sync Mode</label>
                                     <select name="sync_mode" class="form-select">
                                         <option value="full">Full Sync (All Products)</option>
-                                        <option value="incremental">Incremental Sync (Updated Only)</option>
+                                        <option value="batch">Batch Mode (Limit)</option>
+                                        <option value="resume">Resume (From Last Offset)</option>
                                     </select>
                                 </div>
-                                
-                                <div class="mb-3">
-                                    <label class="form-label">Batch Size</label>
-                                    <input type="number" name="batch_size" value="200" min="50" max="500" class="form-control">
+                                <div class="col-md-4">
+                                    <button type="submit" name="action" value="run_sync" class="btn btn-success w-100">
+                                        ▶️ Start Sync Now
+                                    </button>
                                 </div>
                             </div>
-
-                            <!-- Navigation -->
-                            <div class="d-flex justify-content-between mt-4">
-                                <button type="button" class="btn btn-secondary" id="wizardPrevBtn" disabled>
-                                    ← Previous
-                                </button>
-                                <button type="button" class="btn btn-primary" id="wizardNextBtn">
-                                    Next →
-                                </button>
-                                <button type="submit" class="btn btn-success" id="wizardFinishBtn" style="display: none;">
-                                    🚀 Complete Setup & Sync
-                                </button>
-                            </div>
                         </form>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <?php
-}
-
-// ===== DASHBOARD TAB =====
-function woosync_tab_dashboard() {
-    $vendors = woosync_get_vendors();
-    $active_vendor = woosync_get_active_vendor();
-    $sync_log = array_reverse((array) get_option('woosync_sync_log', []));
-    ?>
-    <div class="tab-pane fade show active">
-        <div class="row">
-            <div class="col-md-8">
-                <!-- Vendor Cards -->
-                <div class="card mb-4">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0">📦 Connected Vendors</h5>
-                        <a href="<?php echo admin_url('admin.php?page=woosync-vendors'); ?>" class="btn btn-sm btn-primary">
-                            ➕ Add Vendor
-                        </a>
-                    </div>
-                    <div class="card-body">
-                        <?php if (empty($vendors)): ?>
-                        <div class="alert alert-warning">
-                            No vendors connected. <a href="?page=woosync&skip_wizard=1">Add your first vendor</a> to start syncing.
-                        </div>
-                        <?php else: ?>
-                        <div class="table-responsive">
-                            <table class="table table-hover">
-                                <thead>
-                                    <tr>
-                                        <th>Vendor</th>
-                                        <th>Status</th>
-                                        <th>Products</th>
-                                        <th>Last Sync</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($vendors as $vendor): ?>
-                                    <tr class="<?php echo $vendor['id'] === ($active_vendor['id'] ?? '') ? 'table-primary' : ''; ?>">
-                                        <td>
-                                            <strong><?php echo esc_html($vendor['name']); ?></strong>
-                                            <?php if ($vendor['id'] === ($active_vendor['id'] ?? '')): ?>
-                                            <span class="badge bg-primary ms-2">Active</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <?php echo $vendor['enabled'] ? '✅ Enabled' : '❌ Disabled'; ?>
-                                        </td>
-                                        <td><?php echo number_format($vendor['total_products'] ?? 0); ?></td>
-                                        <td>
-                                            <?php 
-                                            echo !empty($vendor['last_sync']) 
-                                                ? date('d M @ H:i', strtotime($vendor['last_sync'])) 
-                                                : 'Never';
-                                            ?>
-                                        </td>
-                                        <td>
-                                            <div class="btn-group btn-group-sm">
-                                                <?php if ($vendor['id'] !== ($active_vendor['id'] ?? '')): ?>
-                                                <button type="button" class="btn btn-outline-primary set-active-btn" 
-                                                        data-vendor-id="<?php echo esc_attr($vendor['id']); ?>">
-                                                    Set Active
-                                                </button>
-                                                <?php endif; ?>
-                                                <a href="?page=woosync&tab=sync&vendor=<?php echo esc_attr($vendor['id']); ?>" 
-                                                   class="btn btn-outline-secondary">
-                                                    Sync
-                                                </a>
-                                                <a href="?page=woosync-vendors&action=edit&vendor=<?php echo esc_attr($vendor['id']); ?>" 
-                                                   class="btn btn-outline-info">
-                                                    Edit
-                                                </a>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                        <?php endif; ?>
-                    </div>
-                </div>
-
-                <!-- Recent Sync Activity -->
-                <div class="card">
-                    <div class="card-header">
-                        <h5 class="mb-0">📋 Recent Activity</h5>
-                    </div>
-                    <div class="card-body" style="max-height: 300px; overflow-y: auto;">
-                        <?php if (empty($sync_log)): ?>
-                        <p class="text-muted">No sync activity yet.</p>
-                        <?php else: ?>
-                        <div id="syncLogList">
-                            <?php foreach (array_slice($sync_log, 0, 20) as $entry): ?>
-                            <div class="log-entry small mb-2 p-2 <?php 
-                                if (strpos($entry, '✅') !== false) echo 'text-success';
-                                elseif (strpos($entry, '❌') !== false) echo 'text-danger';
-                                elseif (strpos($entry, '⏳') !== false) echo 'text-warning';
-                            ?>">
-                                <?php echo esc_html($entry); ?>
-                            </div>
-                            <?php endforeach; ?>
-                        </div>
-                        <?php endif; ?>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-md-4">
-                <!-- Quick Actions -->
-                <div class="card mb-4">
-                    <div class="card-header bg-primary text-white">
-                        <h5 class="mb-0">⚡ Quick Actions</h5>
-                    </div>
-                    <div class="card-body">
-                        <?php if ($active_vendor): ?>
-                        <a href="?page=woosync&tab=sync" class="btn btn-success w-100 mb-2">
-                            🔄 Run Sync Now
-                        </a>
-                        <a href="?page=woosync&tab=mapping" class="btn btn-outline-primary w-100 mb-2">
-                            🗺️ Manage Field Mapping
-                        </a>
-                        <?php endif; ?>
-                        <a href="?page=woosync-vendors" class="btn btn-outline-secondary w-100 mb-2">
-                            📦 Manage Vendors
-                        </a>
-                        <a href="?page=woosync-log" class="btn btn-outline-info w-100">
-                            📋 View Full Log
-                        </a>
-                    </div>
-                </div>
-
-                <!-- Sync History Chart -->
-                <div class="card">
-                    <div class="card-header bg-info text-white">
-                        <h5 class="mb-0">📈 Sync History</h5>
-                    </div>
-                    <div class="card-body">
-                        <canvas id="syncHistoryChart" height="200"></canvas>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <?php
-}
-
-// ===== SYNC TAB =====
-function woosync_tab_sync() {
-    $active_vendor = woosync_get_active_vendor();
-    $batch_size = get_option('woosync_batch_size', 200);
-    $last_sync = $active_vendor['last_sync'] ?? get_option('woosync_last_sync', '');
-    
-    // Detect available sync modes
-    $endpoints = woosync_get_vendor_endpoints($active_vendor);
-    $has_full_sync = isset($endpoints['products']) && $endpoints['products']['enabled'];
-    $has_incremental_sync = isset($endpoints['products_updated']) && $endpoints['products_updated']['enabled'];
-    ?>
-    <div class="tab-pane fade show active">
-        <div class="row">
-            <div class="col-md-8">
-                <!-- Sync Controls -->
-                <div class="card mb-4">
-                    <div class="card-header bg-success text-white">
-                        <h5 class="mb-0">🔄 Sync Controls - <?php echo esc_html($active_vendor['name']); ?></h5>
-                    </div>
-                    <div class="card-body">
-                        <form method="post" id="syncForm">
-                            <?php wp_nonce_field('woosync_nonce'); ?>
-                            
-                            <div class="alert alert-info">
-                                <strong>Last Sync:</strong> 
-                                <?php echo $last_sync ? date('d M Y @ H:i:s', strtotime($last_sync)) : 'Never'; ?>
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">Batch Size</label>
-                                <input type="number" name="batch_size" value="<?php echo $batch_size; ?>" 
-                                       min="50" max="500" class="form-control" placeholder="Records per batch">
-                                <small class="text-muted">Recommended: 200</small>
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">Sync Mode</label>
-                                <div>
-                                    <?php if ($has_full_sync): ?>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="radio" name="sync_mode" 
-                                               value="full" id="sync_full" checked>
-                                        <label class="form-check-label" for="sync_full">
-                                            🔄 Full Sync (All Products)
-                                        </label>
-                                    </div>
-                                    <?php endif; ?>
-                                    
-                                    <?php if ($has_incremental_sync): ?>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="radio" name="sync_mode" 
-                                               value="incremental" id="sync_incremental"
-                                               <?php echo !$has_full_sync ? 'checked' : ''; ?>>
-                                        <label class="form-check-label" for="sync_incremental">
-                                            📝 Incremental Sync (Updated Only)
-                                        </label>
-                                    </div>
-                                    <?php endif; ?>
-                                    
-                                    <?php if (!$has_full_sync && !$has_incremental_sync): ?>
-                                    <div class="alert alert-warning">
-                                        No sync endpoints enabled. Please configure endpoints in vendor settings.
-                                    </div>
-                                    <?php endif; ?>
-                                </div>
-                            </div>
-
-                            <div class="btn-group mb-4" role="group">
-                                <button type="submit" name="action" value="run_sync" class="btn btn-success btn-lg">
-                                    ▶️ Run Sync Now
-                                </button>
-                                <button type="button" class="btn btn-outline-info" data-bs-toggle="modal" data-bs-target="#cronModal">
-                                    ⏰ Cron Setup
-                                </button>
-                            </div>
-                        </form>
-
+                        
                         <!-- Progress Bar -->
-                        <div id="syncProgress" style="display: none;">
-                            <div class="progress mb-3" style="height: 30px;">
-                                <div class="progress-bar progress-bar-striped progress-bar-animated bg-success" 
-                                     role="progressbar" id="progressBar" style="width: 0%;">
-                                    <span id="progressText" class="fs-5">0%</span>
+                        <div id="syncProgress" style="display:none;" class="mt-3">
+                            <div class="progress" style="height: 25px;">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" id="progressBar" style="width: 0%">
+                                    <span id="progressText">0%</span>
                                 </div>
                             </div>
-                            <div id="syncDetails" class="text-muted small"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Sync Log -->
-                <div class="card">
-                    <div class="card-header bg-dark text-white d-flex justify-content-between">
-                        <h5 class="mb-0">📋 Sync Log</h5>
-                        <form method="post" style="margin: 0;">
-                            <?php wp_nonce_field('woosync_nonce'); ?>
-                            <button type="submit" name="clear_log" class="btn btn-sm btn-warning">Clear Log</button>
-                        </form>
-                    </div>
-                    <div class="card-body" style="max-height: 400px; overflow-y: auto;">
-                        <div id="syncLog">
-                            <?php
-                            $log = array_reverse((array) get_option('woosync_sync_log', []));
-                            if (empty($log)) {
-                                echo '<p class="text-muted">No log entries yet.</p>';
-                            } else {
-                                foreach (array_slice($log, 0, 30) as $entry) {
-                                    echo '<div class="text-monospace small mb-2">' . esc_html($entry) . '</div>';
-                                }
-                            }
-                            ?>
+                            <div id="syncDetails" class="text-muted small mt-2"></div>
                         </div>
                     </div>
                 </div>
             </div>
-
             <div class="col-md-4">
-                <!-- Sync Stats -->
-                <div class="card mb-4">
+                <div class="card">
                     <div class="card-header bg-secondary text-white">
-                        <h5 class="mb-0">📊 Statistics</h5>
+                        <h5 class="mb-0">⚡ Status</h5>
                     </div>
                     <div class="card-body">
                         <div class="d-flex justify-content-between mb-2">
-                            <span>Total Products:</span>
-                            <strong><?php echo number_format($active_vendor['total_products'] ?? 0); ?></strong>
+                            <span>Token Expires:</span>
+                            <span class="badge bg-<?php echo $last_token_time ? 'success' : 'warning'; ?>">
+                                <?php echo $last_token_time ? date('H:i', strtotime($last_token_time) + 55*60) : 'Not fetched'; ?>
+                            </span>
                         </div>
                         <div class="d-flex justify-content-between mb-2">
-                            <span>Sync Mode:</span>
-                            <strong><?php echo $active_vendor['sync_mode'] ?? 'full'; ?></strong>
+                            <span>Auto-Update:</span>
+                            <span class="badge bg-<?php echo $auto_update ? 'success' : 'secondary'; ?>">
+                                <?php echo $auto_update ? 'Enabled' : 'Disabled'; ?>
+                            </span>
                         </div>
                         <div class="d-flex justify-content-between">
-                            <span>Endpoints:</span>
-                            <strong><?php echo count(array_filter($endpoints, fn($e) => $e['enabled'])); ?> enabled</strong>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Visual Sync Progress -->
-                <div class="card">
-                    <div class="card-header bg-primary text-white">
-                        <h5 class="mb-0">🔄 Sync Progress</h5>
-                    </div>
-                    <div class="card-body">
-                        <div id="visualProgress">
-                            <div class="text-center text-muted">
-                                <p>Run a sync to see progress</p>
-                            </div>
+                            <span>API Endpoints:</span>
+                            <span class="badge bg-info">
+                                <?php echo count(array_filter(amrod_get_endpoints(), fn($e) => $e['enabled'])); ?> enabled
+                            </span>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
 
-    <!-- Cron Setup Modal -->
-    <div class="modal fade" id="cronModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">⏰ Setup Automatic Syncing</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <?php woosync_render_cron_helper(); ?>
-                </div>
-            </div>
-        </div>
-    </div>
-    <?php
-}
-
-// ===== CRON HELPER =====
-function woosync_render_cron_helper() {
-    $domain = parse_url(get_home_url(), PHP_URL_HOST);
-    $cron_code = sprintf("*/30 * * * * php %swp-cron.php?action=woosync_scheduled_sync", ABSPATH);
-    ?>
-    <div class="alert alert-info">
-        <h6>📌 How to Setup Cron Jobs</h6>
-        <p>Contact your hosting provider and ask them to add this cron job:</p>
-    </div>
-
-    <div class="input-group mb-3">
-        <input type="text" class="form-control" value="<?php echo esc_attr($cron_code); ?>" readonly id="cronCode">
-        <button class="btn btn-primary" onclick="navigator.clipboard.writeText(document.getElementById('cronCode').value); alert('Copied!');"> 
-            📋 Copy
-        </button>
-    </div>
-
-    <div class="alert alert-warning small">
-        <strong>Running on:</strong> <?php echo esc_html($domain); ?><br>
-        <strong>WordPress Path:</strong> <?php echo esc_html(ABSPATH); ?><br>
-        <strong>Frequency:</strong> Every 30 minutes
-    </div>
-
-    <h6>Cron Schedule Options:</h6>
-    <ul class="list-group">
-        <li class="list-group-item"><code>*/5 * * * *</code> - Every 5 minutes</li>
-        <li class="list-group-item"><code>*/15 * * * *</code> - Every 15 minutes</li>
-        <li class="list-group-item"><code>*/30 * * * *</code> - Every 30 minutes (recommended)</li>
-        <li class="list-group-item"><code>0 * * * *</code> - Hourly</li>
-        <li class="list-group-item"><code>0 0 * * *</code> - Daily at midnight</li>
-    </ul>
-    <?php
-}
-
-// ===== FIELD MAPPING TAB =====
-function woosync_tab_field_mapping() {
-    $active_vendor = woosync_get_active_vendor();
-    $mapping = woosync_get_vendor_field_mapping($active_vendor);
-    $wc_fields = woosync_get_wc_fields();
-    ?>
-    <div class="tab-pane fade show active">
+        <!-- Recent Sync Log -->
         <div class="card">
-            <div class="card-header bg-primary text-white d-flex justify-content-between">
-                <h5 class="mb-0">🗺️ Field Mapping - <?php echo esc_html($active_vendor['name']); ?></h5>
-                <button type="button" class="btn btn-light btn-sm" id="autoDetectMappingBtn">
-                    🔍 Auto-Detect from API
-                </button>
+            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">📋 Recent Activity</h5>
+                <a href="?page=amrod-sync-log" class="btn btn-sm btn-light">View All Logs →</a>
             </div>
-            <div class="card-body">
-                <div class="alert alert-info">
-                    <strong>Map vendor API fields to WooCommerce product fields.</strong><br>
-                    Auto-detected mappings are shown with confidence scores. You can override, add, or remove any mapping.
-                </div>
-
-                <form method="post" id="fieldMappingForm">
-                    <?php wp_nonce_field('woosync_nonce'); ?>
-                    
-                    <div class="table-responsive">
-                        <table class="table table-bordered" id="mappingTable">
-                            <thead class="table-light">
-                                <tr>
-                                    <th style="width: 30%;">WooCommerce Field</th>
-                                    <th style="width: 5%;">→</th>
-                                    <th style="width: 30%;">API Field</th>
-                                    <th style="width: 15%;">Confidence</th>
-                                    <th style="width: 20%;">Sample Value</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($wc_fields as $wc_key => $config): 
-                                    $current_mapping = $mapping[$wc_key] ?? '';
-                                    $confidence = '';
-                                    $confidence_class = '';
-                                    $confidence_icon = '';
-                                    
-                                    if ($current_mapping) {
-                                        // Determine confidence based on mapping quality
-                                        $confidence = 'Medium';
-                                        $confidence_class = 'warning';
-                                        $confidence_icon = '⚠️';
-                                        
-                                        // Check if it's a known good mapping
-                                        $templates = woosync_get_vendor_templates();
-                                        $slug = $active_vendor['slug'] ?? '';
-                                        if (isset($templates[$slug]['field_mapping_template'][$wc_key])) {
-                                            if ($templates[$slug]['field_mapping_template'][$wc_key] === $current_mapping) {
-                                                $confidence = 'High';
-                                                $confidence_class = 'success';
-                                                $confidence_icon = '✅';
-                                            }
-                                        }
-                                    }
-                                ?>
-                                <tr data-wc-field="<?php echo esc_attr($wc_key); ?>">
-                                    <td>
-                                        <strong><?php echo esc_html($config['label']); ?></strong>
-                                        <small class="text-muted d-block"><?php echo esc_html($config['category']); ?></small>
-                                    </td>
-                                    <td class="text-center">→</td>
-                                    <td>
-                                        <input type="text" 
-                                               name="mapping[<?php echo esc_attr($wc_key); ?>]" 
-                                               value="<?php echo esc_attr($current_mapping); ?>" 
-                                               class="form-control form-control-sm api-field-input" 
-                                               placeholder="e.g., <?php echo esc_attr($wc_key === 'name' ? 'Description' : 'FieldName'); ?>"
-                                               list="api-fields-list">
-                                        <datalist id="api-fields-list">
-                                            <!-- Populated by JavaScript -->
-                                        </datalist>
-                                    </td>
-                                    <td>
-                                        <?php if ($current_mapping): ?>
-                                        <span class="badge bg-<?php echo $confidence_class; ?>">
-                                            <?php echo $confidence_icon; ?> <?php echo $confidence; ?>
-                                        </span>
-                                        <?php else: ?>
-                                        <span class="badge bg-secondary">Not mapped</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td class="sample-value text-muted small">-</td>
-                                </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div class="mt-3">
-                        <button type="button" class="btn btn-info me-2" id="testMappingBtn">
-                            🧪 Test Mapping
-                        </button>
-                        <button type="submit" name="save_mapping" class="btn btn-success">
-                            💾 Save Mapping
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary" id="resetMappingBtn">
-                            🔄 Reset to Template
-                        </button>
-                    </div>
-                </form>
-
-                <!-- Test Result -->
-                <div id="mappingTestResult" style="display: none;" class="alert alert-success mt-3">
-                    <h6>📦 Test Product Preview</h6>
-                    <pre id="testProductData" class="mb-0"></pre>
+            <div class="card-body" style="max-height: 300px; overflow-y: auto;">
+                <div id="syncLog">
+                    <?php
+                    $log = array_reverse((array) get_option('amrod_sync_log', []));
+                    if (empty($log)) {
+                        echo '<p class="text-muted mb-0">No activity yet. Start a sync to see logs here.</p>';
+                    } else {
+                        foreach (array_slice($log, 0, 10) as $entry) {
+                            $icon = '📝';
+                            if (strpos($entry, '✅') !== false) $icon = '✅';
+                            elseif (strpos($entry, '❌') !== false) $icon = '❌';
+                            elseif (strpos($entry, '⏳') !== false) $icon = '⏳';
+                            echo '<div class="d-flex align-items-start mb-2"><span class="me-2">' . $icon . '</span><span class="text-monospace small">' . esc_html($entry) . '</span></div>';
+                        }
+                    }
+                    ?>
                 </div>
             </div>
         </div>
@@ -1501,554 +669,463 @@ function woosync_tab_field_mapping() {
     <?php
 }
 
-// ===== SETTINGS TAB =====
-function woosync_tab_settings() {
-    $active_vendor = woosync_get_active_vendor();
-    $batch_size = get_option('woosync_batch_size', 200);
-    $sync_schedule = get_option('woosync_sync_schedule', '');
+// ===== CONNECT & MAP PAGE =====
+function amrod_render_connect_map_page() {
+    $status = amrod_get_simplified_status();
+    $mapping = get_option('amrod_field_mapping', []);
+    $endpoints = amrod_get_endpoints();
     ?>
-    <div class="tab-pane fade show active">
-        <div class="row">
-            <div class="col-md-6">
-                <!-- Current Vendor Settings -->
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h5 class="mb-0">📦 <?php echo esc_html($active_vendor['name']); ?> Settings</h5>
-                    </div>
-                    <div class="card-body">
-                        <form method="post">
-                            <?php wp_nonce_field('woosync_nonce'); ?>
-                            
-                            <div class="mb-3">
-                                <label class="form-label">API Base URL</label>
-                                <input type="url" name="api_url" value="<?php echo esc_attr($active_vendor['api_url'] ?? ''); ?>" class="form-control">
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">Auth URL</label>
-                                <input type="url" name="auth_url" value="<?php echo esc_attr($active_vendor['auth_url'] ?? ''); ?>" class="form-control">
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">Sync Mode</label>
-                                <select name="sync_mode" class="form-select">
-                                    <option value="full" <?php selected($active_vendor['sync_mode'] ?? 'full', 'full'); ?>>Full Sync</option>
-                                    <option value="incremental" <?php selected($active_vendor['sync_mode'] ?? 'full', 'incremental'); ?>>Incremental Sync</option>
-                                </select>
-                            </div>
-
-                            <button type="submit" name="save_vendor_settings" class="btn btn-primary">
-                                💾 Save Settings
-                            </button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-md-6">
-                <!-- Global Settings -->
-                <div class="card">
-                    <div class="card-header bg-secondary text-white">
-                        <h5 class="mb-0">⚙️ Global Settings</h5>
-                    </div>
-                    <div class="card-body">
-                        <form method="post">
-                            <?php wp_nonce_field('woosync_nonce'); ?>
-                            
-                            <div class="mb-3">
-                                <label class="form-label">Default Batch Size</label>
-                                <input type="number" name="batch_size" value="<?php echo $batch_size; ?>" min="50" max="500" class="form-control">
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">Auto Sync Schedule</label>
-                                <select name="sync_schedule" class="form-select">
-                                    <option value="">Manual Only</option>
-                                    <option value="5min" <?php selected($sync_schedule, '5min'); ?>>Every 5 Minutes</option>
-                                    <option value="15min" <?php selected($sync_schedule, '15min'); ?>>Every 15 Minutes</option>
-                                    <option value="30min" <?php selected($sync_schedule, '30min'); ?>>Every 30 Minutes</option>
-                                    <option value="hourly" <?php selected($sync_schedule, 'hourly'); ?>>Every Hour</option>
-                                    <option value="daily" <?php selected($sync_schedule, 'daily'); ?>>Daily</option>
-                                </select>
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">Log Retention (days)</label>
-                                <input type="number" name="log_retain_days" value="<?php echo get_option('woosync_log_retain_days', 30); ?>" min="7" max="365" class="form-control">
-                            </div>
-
-                            <button type="submit" name="save_global_settings" class="btn btn-success">
-                                💾 Save Global Settings
-                            </button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <?php
-}
-
-// ===== VENDORS PAGE =====
-function woosync_render_vendors_page() {
-    $action = $_GET['action'] ?? 'list';
-    $vendor_id = $_GET['vendor'] ?? '';
-    
-    if ($action === 'edit' && $vendor_id) {
-        woosync_render_vendor_edit_page($vendor_id);
-    } elseif ($action === 'add') {
-        woosync_render_vendor_add_page();
-    } else {
-        woosync_render_vendors_list();
-    }
-}
-
-function woosync_render_vendors_list() {
-    $vendors = woosync_get_vendors();
-    $active_vendor = woosync_get_active_vendor();
-    $templates = woosync_get_vendor_templates();
-    ?>
-    <div class="container-fluid mt-4">
+    <div class="container-fluid mt-4 amrod-container">
+        <?php amrod_breadcrumb(['Dashboard' => '?page=amrod-sync', 'Connect & Map' => false]); ?>
+        
+        <!-- Header -->
         <div class="d-flex justify-content-between align-items-center mb-4">
-            <h1>📦 Vendor Management</h1>
-            <a href="?page=woosync-vendors&action=add" class="btn btn-primary">➕ Add New Vendor</a>
-        </div>
-
-        <?php if (empty($vendors)): ?>
-        <div class="card">
-            <div class="card-body text-center py-5">
-                <h3 class="text-muted">No vendors configured</h3>
-                <p>Add your first vendor to start syncing products.</p>
-                <a href="?page=woosync-vendors&action=add" class="btn btn-primary btn-lg">➕ Add First Vendor</a>
+            <div>
+                <h1 class="mb-0">🔗 Connect & Map</h1>
+                <small class="text-muted">Configure API connection and field mappings</small>
             </div>
         </div>
-        <?php else: ?>
+
+        <!-- Two-Column Layout -->
         <div class="row">
-            <?php foreach ($vendors as $vendor): ?>
-            <div class="col-md-4 mb-4">
-                <div class="card <?php echo $vendor['id'] === ($active_vendor['id'] ?? '') ? 'border-primary' : ''; ?>">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0"><?php echo esc_html($vendor['name']); ?></h5>
-                        <?php if ($vendor['id'] === ($active_vendor['id'] ?? '')): ?>
-                        <span class="badge bg-primary">Active</span>
-                        <?php endif; ?>
+            <!-- LEFT COLUMN: Connection + Mapping (40%) -->
+            <div class="col-md-5">
+                <!-- Vendor Tier Card -->
+                <?php 
+                $vendor_tier = amrod_get_vendor_tier('amrod');
+                $tier = $vendor_tier['tier'] ?? 'Standard';
+                $tier_active_since = $vendor_tier['tier_active_since'] ?? '';
+                $tier_expiry = $vendor_tier['tier_expiry'] ?? '';
+                $upgrade_url = $vendor_tier['upgrade_url'] ?? '';
+                ?>
+                <div class="card mb-3 tier-card tier-card-<?php echo strtolower($tier); ?>">
+                    <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><?php echo amrod_get_tier_icon($tier); ?> Amrod — <?php echo $tier; ?> Tier</h5>
+                        <span class="tier-badge <?php echo amrod_get_tier_color_class($tier); ?>"><?php echo $tier; ?></span>
                     </div>
                     <div class="card-body">
-                        <p class="text-muted small"><?php echo esc_html($vendor['slug'] ?? ''); ?></p>
-                        <div class="mb-2">
-                            <strong>Products:</strong> <?php echo number_format($vendor['total_products'] ?? 0); ?>
+                        <div class="row">
+                            <div class="col-6">
+                                <small class="text-muted d-block">Your pricing level</small>
+                                <strong><?php echo $tier; ?></strong>
+                            </div>
+                            <div class="col-6">
+                                <small class="text-muted d-block">Tier active since</small>
+                                <strong><?php echo $tier_active_since ? date('M Y', strtotime($tier_active_since)) : 'Not set'; ?></strong>
+                            </div>
                         </div>
-                        <div class="mb-2">
-                            <strong>Last Sync:</strong> 
-                            <?php echo !empty($vendor['last_sync']) ? date('d M @ H:i', strtotime($vendor['last_sync'])) : 'Never'; ?>
+                        <?php if ($tier_expiry): ?>
+                        <div class="mt-2">
+                            <small class="text-muted d-block">Tier expires</small>
+                            <strong><?php echo $tier_expiry; ?></strong>
                         </div>
-                        <div class="mb-2">
-                            <strong>Status:</strong> <?php echo $vendor['enabled'] ? '✅ Enabled' : '❌ Disabled'; ?>
+                        <?php endif; ?>
+                        <div class="d-flex gap-2 mt-3">
+                            <button type="button" id="refreshTierBtn" class="btn btn-sm btn-outline-dark flex-grow-1">
+                                🔄 Refresh Tier Status
+                            </button>
+                            <?php if ($upgrade_url): ?>
+                            <a href="<?php echo esc_url($upgrade_url); ?>" target="_blank" class="btn btn-sm btn-warning">
+                                ⬆️ Upgrade Tier
+                            </a>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Connection Status Card -->
+                <div class="card mb-3">
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">🔌 API Connection</h5>
+                        <div class="status-dot <?php echo $status['connection_status']; ?>"></div>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">Vendor / Customer Code <span class="help-icon" data-bs-toggle="tooltip" title="Your Amrod customer code">?</span></label>
+                            <input type="text" id="vendorCode" value="<?php echo esc_attr(get_option('amrod_customer_code', '')); ?>" class="form-control" placeholder="e.g., MEDIAPLATFORM">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">API Username <span class="help-icon" data-bs-toggle="tooltip" title="Your Amrod API username">?</span></label>
+                            <input type="text" id="apiUsername" value="<?php echo esc_attr(get_option('amrod_username', '')); ?>" class="form-control" placeholder="username@email.com">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">API Password <span class="help-icon" data-bs-toggle="tooltip" title="Your Amrod API password">?</span></label>
+                            <div class="input-group">
+                                <input type="password" id="apiPassword" class="form-control" placeholder="••••••••">
+                                <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility()">👁</button>
+                            </div>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button type="button" id="testConnectionBtn" class="btn btn-outline-primary flex-grow-1">
+                                🔗 Test Connection
+                            </button>
+                            <button type="button" id="saveCredentialsBtn" class="btn btn-primary flex-grow-1">
+                                💾 Save Credentials
+                            </button>
+                        </div>
+                        <div id="connectionStatus" class="mt-3" style="display:none;"></div>
+                    </div>
+                </div>
+
+                <!-- Field Mapping Card -->
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0">🗺️ Field Mapping</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <!-- Mapping Tabs -->
+                        <ul class="nav nav-tabs" id="mappingTabs" role="tablist">
+                            <li class="nav-item">
+                                <button class="nav-link active" id="core-tab" data-bs-toggle="tab" data-bs-target="#core-fields" type="button">Core Fields</button>
+                            </li>
+                            <li class="nav-item">
+                                <button class="nav-link" id="categories-tab" data-bs-toggle="tab" data-bs-target="#categories-fields" type="button">📂 Categories</button>
+                            </li>
+                            <li class="nav-item">
+                                <button class="nav-link" id="attributes-tab" data-bs-toggle="tab" data-bs-target="#attributes-fields" type="button">🏷️ Attributes</button>
+                            </li>
+                            <li class="nav-item">
+                                <button class="nav-link" id="marketing-tab" data-bs-toggle="tab" data-bs-target="#marketing-fields" type="button">📣 Marketing</button>
+                            </li>
+                        </ul>
+
+                        <div class="tab-content p-3" id="mappingTabContent">
+                            <!-- Core Fields Tab -->
+                            <div class="tab-pane fade show active" id="core-fields" role="tabpanel">
+                                <?php amrod_render_mapping_tab('core', ['sku', 'name', 'price', 'sale_price', 'description', 'short_description', 'stock', 'image', 'images']); ?>
+                            </div>
+                            <!-- Categories Tab -->
+                            <div class="tab-pane fade" id="categories-fields" role="tabpanel">
+                                <?php amrod_render_mapping_tab('categories', ['categories']); ?>
+                            </div>
+                            <!-- Attributes Tab -->
+                            <div class="tab-pane fade" id="attributes-fields" role="tabpanel">
+                                <?php amrod_render_mapping_tab('attributes', ['brand', 'colour', 'size']); ?>
+                            </div>
+                            <!-- Marketing Tab -->
+                            <div class="tab-pane fade" id="marketing-fields" role="tabpanel">
+                                <?php amrod_render_mapping_tab('marketing', ['clearance', 'deal_of_day', 'banner_image', 'catalog_pdf', 'special_message', 'sort_order']); ?>
+                            </div>
                         </div>
                     </div>
                     <div class="card-footer">
-                        <div class="btn-group w-100">
-                            <?php if ($vendor['id'] !== ($active_vendor['id'] ?? '')): ?>
-                            <button type="button" class="btn btn-outline-primary btn-sm set-active-btn" 
-                                    data-vendor-id="<?php echo esc_attr($vendor['id']); ?>">
-                                Set Active
+                        <div class="d-flex gap-2">
+                            <button type="button" id="autoDetectBtn" class="btn btn-outline-secondary flex-grow-1">
+                                🔍 Auto-Detect
                             </button>
-                            <?php endif; ?>
-                            <a href="?page=woosync-vendors&action=edit&vendor=<?php echo esc_attr($vendor['id']); ?>" 
-                               class="btn btn-outline-secondary btn-sm">
-                                Edit
-                            </a>
-                            <button type="button" class="btn btn-outline-danger btn-sm delete-vendor-btn"
-                                    data-vendor-id="<?php echo esc_attr($vendor['id']); ?>"
-                                    data-vendor-name="<?php echo esc_attr($vendor['name']); ?>">
-                                Delete
+                            <button type="button" id="saveMappingBtn" class="btn btn-success flex-grow-1">
+                                💾 Save Mapping
                             </button>
                         </div>
                     </div>
                 </div>
             </div>
+
+            <!-- RIGHT COLUMN: Live Preview (60%) -->
+            <div class="col-md-7">
+                <div class="card">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="mb-0">👁 Live Preview</h5>
+                    </div>
+                    <div class="card-body">
+                        <!-- Search Bar -->
+                        <div class="mb-3">
+                            <label class="form-label">Search Products to Preview <span class="help-icon" data-bs-toggle="tooltip" title="Type to search products. Results update as you type.">?</span></label>
+                            <div class="input-group">
+                                <input type="text" id="productSearch" class="form-control" placeholder="Search by name, SKU, or keyword (e.g., cups)..." autocomplete="off">
+                                <button class="btn btn-primary" type="button" id="searchBtn">🔍</button>
+                            </div>
+                            <small class="text-muted">Press Enter or click search to see all matching products</small>
+                        </div>
+
+                        <!-- Search Results Dropdown -->
+                        <div id="searchResults" class="list-group mb-3" style="max-height: 200px; overflow-y: auto; display: none;"></div>
+
+                        <!-- Product Preview Card -->
+                        <div id="productPreview" class="border rounded p-3" style="background: #f8f9fa;">
+                            <div class="text-center text-muted py-5">
+                                <div class="mb-3" style="font-size: 48px;">📦</div>
+                                <p class="mb-1">No product selected</p>
+                                <small>Search for a product above to preview how it will appear in WooCommerce</small>
+                            </div>
+                        </div>
+
+                        <!-- Tier Pricing Breakdown (hidden by default) -->
+                        <div id="tierPricingBreakdown" class="mt-3" style="display: none;">
+                            <div class="price-breakdown-box bg-light border rounded p-3">
+                                <h6 class="mb-3">💰 Tier Pricing Breakdown</h6>
+                                <div class="breakdown-row d-flex justify-content-between py-1 border-bottom">
+                                    <span>Supplier Tier Price:</span>
+                                    <span class="fw-bold text-primary" id="tierPriceDisplay">R0.00</span>
+                                </div>
+                                <div class="breakdown-row d-flex justify-content-between py-1 border-bottom">
+                                    <span>WooSync Markup (<span id="markupPercentDisplay">30</span>%):</span>
+                                    <span class="text-success" id="markupAmountDisplay">+R0.00</span>
+                                </div>
+                                <div class="breakdown-row d-flex justify-content-between py-1 border-bottom bg-dark text-white px-2 rounded">
+                                    <span>Customer Sees:</span>
+                                    <span class="fw-bold" id="customerPriceDisplay">R0.00</span>
+                                </div>
+                                <div class="breakdown-row d-flex justify-content-between py-1 text-success">
+                                    <span>Your Margin:</span>
+                                    <span class="fw-bold" id="marginDisplay">R0.00</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-footer">
+                        <div class="d-flex gap-2">
+                            <button type="button" id="syncThisProductBtn" class="btn btn-outline-primary flex-grow-1" disabled>
+                                📦 Sync This Product
+                            </button>
+                            <button type="button" id="syncAllProductsBtn" class="btn btn-success flex-grow-1">
+                                ▶️ Sync All Products
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- API Endpoints Quick Config -->
+                <div class="card mt-3">
+                    <div class="card-header bg-secondary text-white">
+                        <h5 class="mb-0">🔌 API Endpoints <span class="help-icon" data-bs-toggle="tooltip" title="Select which API endpoints to use for syncing">?</span></h5>
+                    </div>
+                    <div class="card-body p-2">
+                        <div class="row">
+                            <?php 
+                            $quick_endpoints = ['products', 'stock', 'prices', 'categories'];
+                            foreach ($quick_endpoints as $key): 
+                                $ep = $endpoints[$key] ?? null;
+                                if ($ep):
+                            ?>
+                            <div class="col-md-6 mb-2">
+                                <div class="form-check">
+                                    <input class="form-check-input endpoint-toggle" type="checkbox" 
+                                           id="ep_<?php echo $key; ?>" 
+                                           data-endpoint="<?php echo $key; ?>"
+                                           <?php checked($ep['enabled']); ?>>
+                                    <label class="form-check-label" for="ep_<?php echo $key; ?>">
+                                        <strong><?php echo $ep['label']; ?></strong>
+                                        <small class="text-muted d-block"><?php echo $ep['path']; ?></small>
+                                    </label>
+                                </div>
+                            </div>
+                            <?php endif; endforeach; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php
+}
+
+// ===== RENDER MAPPING TAB HELPER =====
+function amrod_render_mapping_tab($category, $fields) {
+    $mapping = get_option('amrod_field_mapping', []);
+    $wc_fields = [
+        'sku' => 'SKU',
+        'name' => 'Product Name',
+        'price' => 'Regular Price',
+        'sale_price' => 'Sale Price',
+        'description' => 'Description',
+        'short_description' => 'Short Description',
+        'categories' => 'Categories',
+        'brand' => 'Brand',
+        'colour' => 'Colour',
+        'size' => 'Size',
+        'stock' => 'Stock Qty',
+        'image' => 'Main Image',
+        'images' => 'Image Gallery',
+        'clearance' => 'Clearance',
+        'deal_of_day' => 'Deal of Day',
+        'banner_image' => 'Banner Image',
+        'catalog_pdf' => 'Catalog PDF',
+        'special_message' => 'Special Msg',
+        'sort_order' => 'Sort Order',
+    ];
+    ?>
+    <table class="table table-sm table-bordered mb-0">
+        <thead class="table-light">
+            <tr>
+                <th style="width: 40%;">Amrod Field</th>
+                <th style="width: 10%;"></th>
+                <th style="width: 50%;">WooCommerce</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php foreach ($fields as $wc_key): ?>
+            <tr>
+                <td>
+                    <input type="text" name="mapping[<?php echo $wc_key; ?>]" 
+                           value="<?php echo esc_attr($mapping[$wc_key] ?? ''); ?>" 
+                           class="form-control form-control-sm" 
+                           placeholder="e.g., <?php echo $wc_key === 'sku' ? 'ProductCode' : ucfirst($wc_key); ?>">
+                </td>
+                <td class="text-center align-middle">→</td>
+                <td class="align-middle">
+                    <small><?php echo $wc_fields[$wc_key] ?? $wc_key; ?></small>
+                </td>
+            </tr>
             <?php endforeach; ?>
-        </div>
-        <?php endif; ?>
-
-        <!-- Vendor Templates -->
-        <div class="card mt-4">
-            <div class="card-header">
-                <h5 class="mb-0">📚 Available Vendor Templates</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <?php foreach ($templates as $slug => $template): ?>
-                    <div class="col-md-4">
-                        <div class="card">
-                            <div class="card-body">
-                                <h6><?php echo esc_html($template['name']); ?></h6>
-                                <p class="small text-muted"><?php echo esc_html($template['description']); ?></p>
-                                <code class="small"><?php echo esc_html($template['auth_type']); ?></code>
-                            </div>
-                        </div>
-                    </div>
-                    <?php endforeach; ?>
-                </div>
-            </div>
-        </div>
-    </div>
+        </tbody>
+    </table>
     <?php
 }
 
-function woosync_render_vendor_add_page() {
-    $templates = woosync_get_vendor_templates();
+// ===== SYNC LOG PAGE =====
+function amrod_render_sync_log_page() {
+    $log = array_reverse((array) get_option('amrod_sync_log', []));
+    $last_sync = get_option('amrod_last_sync');
+    $total_products = get_option('amrod_total_products', 0);
+    $vendor_tier = amrod_get_vendor_tier('amrod');
+    $tier = $vendor_tier['tier'] ?? 'Standard';
     ?>
-    <div class="container-fluid mt-4">
+    <div class="container-fluid mt-4 amrod-container">
+        <?php amrod_breadcrumb(['Dashboard' => '?page=amrod-sync', 'Sync Log' => false]); ?>
+        
+        <!-- Header -->
         <div class="d-flex justify-content-between align-items-center mb-4">
-            <h1>➕ Add New Vendor</h1>
-            <a href="?page=woosync-vendors" class="btn btn-outline-secondary">← Back to Vendors</a>
-        </div>
-
-        <div class="row">
-            <div class="col-md-3">
-                <!-- Template Selection -->
-                <div class="card">
-                    <div class="card-header">
-                        <h5 class="mb-0">Select Template</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="list-group" id="templateList">
-                            <button type="button" class="list-group-item list-group-item-action active" data-template="custom">
-                                ➕ Custom Vendor
-                            </button>
-                            <?php foreach ($templates as $slug => $template): ?>
-                            <button type="button" class="list-group-item list-group-item-action" data-template="<?php echo esc_attr($slug); ?>">
-                                <?php echo esc_html($template['name']); ?>
-                            </button>
-                            <?php endforeach; ?>
-                        </div>
-                    </div>
-                </div>
+            <div>
+                <h1 class="mb-0">📋 Sync Log</h1>
+                <small class="text-muted">History, errors, and sync activity</small>
             </div>
-
-            <div class="col-md-9">
-                <div class="card">
-                    <div class="card-header">
-                        <h5 class="mb-0">Vendor Configuration</h5>
-                    </div>
-                    <div class="card-body">
-                        <form method="post" id="vendorForm">
-                            <?php wp_nonce_field('woosync_nonce'); ?>
-                            <input type="hidden" name="vendor_template" id="selectedTemplate" value="custom">
-                            
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label class="form-label">Vendor Name *</label>
-                                        <input type="text" name="vendor_name" required class="form-control" placeholder="My Supplier">
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label class="form-label">Slug *</label>
-                                        <input type="text" name="vendor_slug" required class="form-control" placeholder="my-supplier">
-                                        <small class="text-muted">Unique identifier, lowercase with hyphens</small>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label class="form-label">API Base URL *</label>
-                                        <input type="url" name="api_url" required class="form-control" placeholder="https://api.example.com">
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label class="form-label">Auth URL *</label>
-                                        <input type="url" name="auth_url" required class="form-control" placeholder="https://auth.example.com">
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">Authentication Type</label>
-                                <select name="auth_type" id="authTypeSelect" class="form-select">
-                                    <option value="vendor_login">Vendor Login (Username/Password)</option>
-                                    <option value="api_key">API Key</option>
-                                    <option value="bearer_token">Bearer Token</option>
-                                    <option value="oauth2">OAuth 2.0</option>
-                                </select>
-                            </div>
-
-                            <div id="authCredentialsFields">
-                                <!-- Dynamic fields based on auth type -->
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">Sync Mode</label>
-                                <select name="sync_mode" class="form-select">
-                                    <option value="full">Full Sync (All Products)</option>
-                                    <option value="incremental">Incremental Sync (Updated Only)</option>
-                                </select>
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">
-                                    <input type="checkbox" name="enabled" checked> Enable Vendor
-                                </label>
-                            </div>
-
-                            <hr>
-
-                            <h5>Endpoints Configuration</h5>
-                            <div id="endpointsConfig">
-                                <p class="text-muted">Configure API endpoints after saving the vendor.</p>
-                            </div>
-
-                            <div class="mt-4">
-                                <button type="submit" name="save_vendor" class="btn btn-success btn-lg">
-                                    💾 Save Vendor
-                                </button>
-                                <a href="?page=woosync-vendors" class="btn btn-outline-secondary">Cancel</a>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <?php
-}
-
-function woosync_render_vendor_edit_page($vendor_id) {
-    $vendor = woosync_get_vendor_by_id($vendor_id);
-    if (!$vendor) {
-        wp_die('Vendor not found');
-    }
-    
-    $endpoints = woosync_get_vendor_endpoints($vendor);
-    ?>
-    <div class="container-fluid mt-4">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h1>✏️ Edit Vendor: <?php echo esc_html($vendor['name']); ?></h1>
-            <a href="?page=woosync-vendors" class="btn btn-outline-secondary">← Back to Vendors</a>
-        </div>
-
-        <div class="row">
-            <div class="col-md-8">
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h5 class="mb-0">Basic Settings</h5>
-                    </div>
-                    <div class="card-body">
-                        <form method="post">
-                            <?php wp_nonce_field('woosync_nonce'); ?>
-                            <input type="hidden" name="vendor_id" value="<?php echo esc_attr($vendor_id); ?>">
-                            
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label class="form-label">Vendor Name</label>
-                                        <input type="text" name="vendor_name" value="<?php echo esc_attr($vendor['name']); ?>" class="form-control" required>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label class="form-label">Slug</label>
-                                        <input type="text" name="vendor_slug" value="<?php echo esc_attr($vendor['slug']); ?>" class="form-control" readonly>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label class="form-label">API Base URL</label>
-                                        <input type="url" name="api_url" value="<?php echo esc_attr($vendor['api_url']); ?>" class="form-control">
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label class="form-label">Auth URL</label>
-                                        <input type="url" name="auth_url" value="<?php echo esc_attr($vendor['auth_url']); ?>" class="form-control">
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">Sync Mode</label>
-                                <select name="sync_mode" class="form-select">
-                                    <option value="full" <?php selected($vendor['sync_mode'] ?? 'full', 'full'); ?>>Full Sync</option>
-                                    <option value="incremental" <?php selected($vendor['sync_mode'] ?? 'full', 'incremental'); ?>>Incremental Sync</option>
-                                </select>
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">
-                                    <input type="checkbox" name="enabled" <?php checked($vendor['enabled'] ?? true); ?>> Enable Vendor
-                                </label>
-                            </div>
-
-                            <button type="submit" name="save_vendor" class="btn btn-success">💾 Save Changes</button>
-                        </form>
-                    </div>
-                </div>
-
-                <!-- Endpoints -->
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h5 class="mb-0">API Endpoints</h5>
-                    </div>
-                    <div class="card-body">
-                        <form method="post">
-                            <?php wp_nonce_field('woosync_nonce'); ?>
-                            <input type="hidden" name="vendor_id" value="<?php echo esc_attr($vendor_id); ?>">
-                            
-                            <div class="table-responsive">
-                                <table class="table table-sm">
-                                    <thead>
-                                        <tr>
-                                            <th>Enabled</th>
-                                            <th>Label</th>
-                                            <th>Path</th>
-                                            <th>Full URL</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($endpoints as $key => $ep): ?>
-                                        <tr>
-                                            <td>
-                                                <input type="checkbox" name="endpoints[<?php echo $key; ?>][enabled]" 
-                                                       value="1" <?php checked($ep['enabled'] ?? false); ?>>
-                                            </td>
-                                            <td>
-                                                <input type="text" name="endpoints[<?php echo $key; ?>][label]" 
-                                                       value="<?php echo esc_attr($ep['label']); ?>" class="form-control form-control-sm">
-                                            </td>
-                                            <td>
-                                                <input type="text" name="endpoints[<?php echo $key; ?>][path]" 
-                                                       value="<?php echo esc_attr($ep['path']); ?>" class="form-control form-control-sm">
-                                            </td>
-                                            <td>
-                                                <code class="small"><?php echo esc_html($vendor['api_url'] . $ep['path']); ?></code>
-                                            </td>
-                                        </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
-                            </div>
-
-                            <button type="submit" name="save_endpoints" class="btn btn-primary">💾 Save Endpoints</button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-md-4">
-                <!-- Vendor Info -->
-                <div class="card">
-                    <div class="card-header">
-                        <h5 class="mb-0">Vendor Info</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="mb-2">
-                            <strong>ID:</strong> <code><?php echo esc_html($vendor['id']); ?></code>
-                        </div>
-                        <div class="mb-2">
-                            <strong>Auth Type:</strong> <?php echo esc_html($vendor['auth_type'] ?? 'vendor_login'); ?>
-                        </div>
-                        <div class="mb-2">
-                            <strong>Products:</strong> <?php echo number_format($vendor['total_products'] ?? 0); ?>
-                        </div>
-                        <div class="mb-2">
-                            <strong>Created:</strong> <?php echo esc_html($vendor['created_at'] ?? ''); ?>
-                        </div>
-                        <div class="mb-2">
-                            <strong>Last Updated:</strong> <?php echo esc_html($vendor['updated_at'] ?? ''); ?>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Test Connection -->
-                <div class="card mt-4">
-                    <div class="card-header">
-                        <h5 class="mb-0">Test Connection</h5>
-                    </div>
-                    <div class="card-body">
-                        <button type="button" class="btn btn-outline-primary w-100" id="testVendorConnectionBtn">
-                            🔗 Test API Connection
-                        </button>
-                        <div id="connectionTestResult" class="mt-3"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <?php
-}
-
-// ===== LOG PAGE =====
-function woosync_render_log_page() {
-    $log = array_reverse((array) get_option('woosync_sync_log', []));
-    $filter = $_GET['filter'] ?? 'all';
-    ?>
-    <div class="container-fluid mt-4">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h1>📋 Sync Log</h1>
             <form method="post" class="d-inline">
-                <?php wp_nonce_field('woosync_nonce'); ?>
-                <button type="submit" name="clear_log" class="btn btn-danger" onclick="return confirm('Clear all log entries?');">
-                    🗑️ Clear Log
-                </button>
+                <?php wp_nonce_field('amrod_sync_nonce'); ?>
+                <button type="submit" name="clear_log" class="btn btn-outline-danger btn-sm">🗑️ Clear Log</button>
             </form>
         </div>
 
-        <!-- Filters -->
-        <div class="btn-group mb-3">
-            <a href="?page=woosync-log&filter=all" class="btn btn-outline-primary <?php echo $filter === 'all' ? 'active' : ''; ?>">
-                All
-            </a>
-            <a href="?page=woosync-log&filter=success" class="btn btn-outline-success <?php echo $filter === 'success' ? 'active' : ''; ?>">
-                ✅ Success
-            </a>
-            <a href="?page=woosync-log&filter=error" class="btn btn-outline-danger <?php echo $filter === 'error' ? 'active' : ''; ?>">
-                ❌ Errors
-            </a>
-            <a href="?page=woosync-log&filter=warning" class="btn btn-outline-warning <?php echo $filter === 'warning' ? 'active' : ''; ?>">
-                ⚠️ Warnings
-            </a>
+        <!-- Stats Row -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3><?php echo number_format($total_products); ?></h3>
+                        <p class="text-muted mb-0">Total Products Synced</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3><?php echo count($log); ?></h3>
+                        <p class="text-muted mb-0">Log Entries</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3><?php echo $last_sync ? date('d M H:i', strtotime($last_sync)) : 'Never'; ?></h3>
+                        <p class="text-muted mb-0">Last Sync</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <span class="tier-badge <?php echo amrod_get_tier_color_class($tier); ?> fs-5 px-3 py-2">
+                            <?php echo amrod_get_tier_icon($tier); ?> <?php echo $tier; ?> Tier
+                        </span>
+                        <p class="text-muted mb-0 mt-2">Your Pricing Level</p>
+                    </div>
+                </div>
+            </div>
         </div>
 
+        <!-- Tier Pricing Benefits Section -->
+        <?php if ($tier !== 'Standard'): ?>
+        <div class="card mb-4 border-warning">
+            <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">💰 Tier Pricing Benefits</h5>
+                <button type="button" id="refreshSavingsBtn" class="btn btn-sm btn-dark">
+                    🔄 Refresh Savings
+                </button>
+            </div>
+            <div class="card-body">
+                <div id="tierSavingsSummary" class="mb-3">
+                    <div class="alert alert-info">
+                        <span class="spinner-border spinner-border-sm me-2"></span>
+                        Click "Refresh Savings" to load tier pricing comparison
+                    </div>
+                </div>
+                <div id="tierSavingsTable" style="max-height: 400px; overflow-y: auto;">
+                    <table class="table table-sm table-hover">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>Product</th>
+                                <th>Standard Price</th>
+                                <th>Your Tier Price</th>
+                                <th>Savings/Unit</th>
+                                <th>Savings %</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tierSavingsBody">
+                            <tr>
+                                <td colspan="5" class="text-center text-muted py-4">
+                                    Click "Refresh Savings" to load tier pricing comparison
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- Filters -->
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <label class="form-label">Filter by Type</label>
+                        <select id="logFilter" class="form-select">
+                            <option value="all">All Entries</option>
+                            <option value="success">✅ Success Only</option>
+                            <option value="error">❌ Errors Only</option>
+                            <option value="info">📝 Info Only</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Search</label>
+                        <input type="text" id="logSearch" class="form-control" placeholder="Search logs...">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Date Range</label>
+                        <select id="logDateRange" class="form-select">
+                            <option value="all">All Time</option>
+                            <option value="today">Today</option>
+                            <option value="week">This Week</option>
+                            <option value="month">This Month</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Log Entries -->
         <div class="card">
-            <div class="card-body" style="max-height: 600px; overflow-y: auto;">
-                <?php if (empty($log)): ?>
-                <p class="text-muted text-center py-5">No log entries yet.</p>
-                <?php else: ?>
-                <table class="table table-sm">
-                    <thead class="sticky-top bg-light">
-                        <tr>
-                            <th style="width: 20%;">Timestamp</th>
-                            <th style="width: 60%;">Message</th>
-                            <th style="width: 20%;">Type</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($log as $entry): 
-                            $type = 'info';
-                            if (strpos($entry, '✅') !== false) $type = 'success';
-                            elseif (strpos($entry, '❌') !== false) $type = 'error';
-                            elseif (strpos($entry, '⚠️') !== false) $type = 'warning';
-                            elseif (strpos($entry, '⏳') !== false) $type = 'warning';
-                            
-                            if ($filter !== 'all' && $filter !== $type) continue;
-                        ?>
-                        <tr class="table-<?php echo $type; ?>">
-                            <td class="text-nowrap"><?php echo esc_html(substr($entry, 0, 19)); ?></td>
-                            <td><?php echo esc_html(substr($entry, 21)); ?></td>
-                            <td><span class="badge bg-<?php echo $type === 'error' ? 'danger' : ($type === 'success' ? 'success' : 'warning'); ?>"><?php echo ucfirst($type); ?></span></td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-                <?php endif; ?>
+            <div class="card-body" style="max-height: 500px; overflow-y: auto;">
+                <div id="logEntries">
+                    <?php
+                    if (empty($log)) {
+                        echo '<div class="text-center text-muted py-5"><p>No log entries yet.</p></div>';
+                    } else {
+                        foreach ($log as $entry) {
+                            $icon = '📝';
+                            $row_class = '';
+                            if (strpos($entry, '✅') !== false) { $icon = '✅'; $row_class = 'border-start border-success'; }
+                            elseif (strpos($entry, '❌') !== false) { $icon = '❌'; $row_class = 'border-start border-danger'; }
+                            elseif (strpos($entry, '⏳') !== false) { $icon = '⏳'; $row_class = 'border-start border-warning'; }
+                            echo '<div class="log-entry p-2 mb-2 ' . $row_class . '" style="background: #f8f9fa; border-left: 3px solid #ccc;">';
+                            echo '<span class="me-2">' . $icon . '</span>';
+                            echo '<span class="text-monospace small">' . esc_html($entry) . '</span>';
+                            echo '</div>';
+                        }
+                    }
+                    ?>
+                </div>
             </div>
         </div>
     </div>
@@ -2056,435 +1133,1286 @@ function woosync_render_log_page() {
 }
 
 // ===== PROMOTIONS PAGE =====
-function woosync_render_promotions_page() {
-    if (!current_user_can('manage_options')) wp_die('Insufficient permissions');
-    
-    $notifications_obj = WooSync_Notifications::get_instance();
-    $active_tab = $_GET['tab'] ?? 'notifications';
-    $edit_id = $_GET['edit'] ?? '';
-    
-    if ($edit_id && $active_tab === 'notifications') {
-        $notifications = $notifications_obj->get_notifications();
-        $edit_notification = $notifications[$edit_id] ?? null;
-    } else {
-        $edit_notification = null;
-    }
-    
+function amrod_render_promotions_page() {
     ?>
-    <div class="container-fluid mt-4 woosync-promotions-container">
-        <div class="woosync-brand-header">
+    <div class="container-fluid mt-4 amrod-container">
+        <?php amrod_breadcrumb(['Dashboard' => '?page=amrod-sync', 'Promotions' => false]); ?>
+        
+        <!-- Header -->
+        <div class="d-flex justify-content-between align-items-center mb-4">
             <div>
-                <h1 class="mb-1">Promotions</h1>
-                <span class="powered-by">Manage notifications and cross-sells for WooSync users</span>
-            </div>
-            <div class="text-end">
-                <img src="<?php echo WOOSYNC_ASSETS; ?>images/woosync-logo.svg" height="40" alt="WooSync">
+                <h1 class="mb-0">📣 Promotions</h1>
+                <small class="text-muted">Banners, cross-sells, and notifications</small>
             </div>
         </div>
-        
-        <ul class="nav nav-tabs mb-4">
-            <li class="nav-item">
-                <a class="nav-link <?php echo $active_tab === 'notifications' ? 'active' : ''; ?>" href="?page=woosync-promotions&tab=notifications">
-                    🔔 Notifications
-                </a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link <?php echo $active_tab === 'services' ? 'active' : ''; ?>" href="?page=woosync-promotions&tab=services">
-                    🛠️ Services
-                </a>
-            </li>
-        </ul>
-        
-        <?php if ($active_tab === 'notifications'): ?>
-            <?php woosync_render_notifications_tab($notifications_obj, $edit_notification); ?>
-        <?php else: ?>
-            <?php woosync_render_services_tab($notifications_obj); ?>
-        <?php endif; ?>
-    </div>
-    <?php
-}
 
-function woosync_render_notifications_tab($notifications_obj, $edit_notification = null) {
-    $notifications = $notifications_obj->get_notifications();
-    $active_notifications = $notifications_obj->get_active_notifications();
-    ?>
-    <div class="row">
-        <div class="col-md-8">
-            <div class="card mb-4">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">📋 Notification List</h5>
-                    <a href="?page=woosync-promotions&tab=notifications&action=add" class="btn btn-primary btn-sm">
-                        ➕ Add Notification
-                    </a>
-                </div>
-                <div class="card-body">
-                    <?php if (empty($notifications)): ?>
-                        <p class="text-muted text-center py-4">No notifications created yet.</p>
-                    <?php else: ?>
-                        <table class="table table-hover">
-                            <thead>
-                                <tr>
-                                    <th>Title</th>
-                                    <th>Type</th>
-                                    <th>Status</th>
-                                    <th>Stats</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($notifications as $id => $notif): ?>
-                                    <?php 
-                                        $is_active = isset($active_notifications[$id]);
-                                        $expiry = $notif['expiry_date'] ?? '';
-                                        $expired = !empty($expiry) && strtotime($expiry) < time();
-                                    ?>
-                                    <tr>
-                                        <td>
-                                            <strong><?php echo esc_html($notif['title'] ?? 'Untitled'); ?></strong>
-                                            <?php if ($expired): ?>
-                                                <span class="badge bg-secondary ms-2">Expired</span>
-                                            <?php elseif ($is_active): ?>
-                                                <span class="badge bg-success ms-2">Active</span>
-                                            <?php else: ?>
-                                                <span class="badge bg-secondary ms-2">Scheduled</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td><span class="badge bg-info"><?php echo esc_html($notif['type'] ?? 'banner'); ?></span></td>
-                                        <td>
-                                            <small class="text-muted">
-                                                <?php echo esc_html($notif['show_from'] ?? 'Now'); ?>
-                                                <?php if (!empty($expiry)): ?>
-                                                    → <?php echo esc_html($expiry); ?>
-                                                <?php endif; ?>
-                                            </small>
-                                        </td>
-                                        <td>
-                                            <small>
-                                                <span class="text-success">Views: <?php echo intval($notif['views'] ?? 0); ?></span>
-                                                <span class="text-primary ms-2">Clicks: <?php echo intval($notif['clicks'] ?? 0); ?></span>
-                                            </small>
-                                        </td>
-                                        <td>
-                                            <div class="btn-group btn-group-sm">
-                                                <a href="?page=woosync-promotions&tab=notifications&edit=<?php echo esc_attr($id); ?>" class="btn btn-outline-secondary">Edit</a>
-                                                <form method="post" class="d-inline">
-                                                    <?php wp_nonce_field('woosync_notifications'); ?>
-                                                    <input type="hidden" name="notification_id" value="<?php echo esc_attr($id); ?>">
-                                                    <button type="submit" name="woosync_delete_notification" class="btn btn-outline-danger btn-sm">Delete</button>
-                                                </form>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    <?php endif; ?>
-                </div>
-            </div>
-        </div>
-        
-        <div class="col-md-4">
-            <div class="woosync-notification-editor">
-                <h5 class="mb-3"><?php echo $edit_notification ? '✏️ Edit Notification' : '➕ Create Notification'; ?></h5>
-                
-                <form method="post">
-                    <?php wp_nonce_field('woosync_notifications'); ?>
-                    <?php if ($edit_notification): ?>
-                        <input type="hidden" name="notification_id" value="<?php echo esc_attr($_GET['edit']); ?>">
-                    <?php endif; ?>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">Title</label>
-                        <input type="text" name="notification_title" class="form-control" required value="<?php echo esc_attr($edit_notification['title'] ?? ''); ?>">
+        <!-- Promo Cards -->
+        <div class="row">
+            <!-- Clearance Banners -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-danger text-white">
+                        <h5 class="mb-0">🏷️ Clearance Banners</h5>
                     </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">Message</label>
-                        <textarea name="notification_message" class="form-control" rows="3"><?php echo esc_textarea($edit_notification['message'] ?? ''); ?></textarea>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">Link (optional)</label>
-                        <input type="url" name="notification_link" class="form-control" value="<?php echo esc_attr($edit_notification['link'] ?? ''); ?>">
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">CTA Button Text</label>
-                        <input type="text" name="notification_cta" class="form-control" value="<?php echo esc_attr($edit_notification['cta_text'] ?? 'Learn More'); ?>">
-                    </div>
-                    
-                    <div class="row mb-3">
-                        <div class="col-6">
-                            <label class="form-label">Background Color</label>
-                            <input type="color" name="notification_bg_color" class="form-control form-control-color" value="<?php echo esc_attr($edit_notification['background_color'] ?? '#1a1a2e'); ?>">
+                    <div class="card-body">
+                        <p class="text-muted">Manage clearance and sale banners displayed on product pages.</p>
+                        <div class="alert alert-info">
+                            <small>Clearance products are automatically detected from the "Clearance" field mapping.</small>
                         </div>
-                        <div class="col-6">
-                            <label class="form-label">Text Color</label>
-                            <input type="color" name="notification_text_color" class="form-control form-control-color" value="<?php echo esc_attr($edit_notification['text_color'] ?? '#ffffff'); ?>">
+                        <div class="mb-3">
+                            <label class="form-label">Banner Position</label>
+                            <select class="form-select">
+                                <option>Above Product Title</option>
+                                <option>Below Product Image</option>
+                                <option>Sidebar Widget</option>
+                            </select>
                         </div>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">Type</label>
-                        <select name="notification_type" class="form-select">
-                            <option value="banner" <?php selected($edit_notification['type'] ?? 'banner', 'banner'); ?>>Banner (Top of pages)</option>
-                            <option value="notice" <?php selected($edit_notification['type'] ?? 'banner', 'notice'); ?>>Admin Notice</option>
-                        </select>
-                    </div>
-                    
-                    <div class="row mb-3">
-                        <div class="col-6">
-                            <label class="form-label">Show From</label>
-                            <input type="date" name="notification_show_from" class="form-control" value="<?php echo esc_attr($edit_notification['show_from'] ?? ''); ?>">
+                        <div class="mb-3">
+                            <label class="form-label">Banner Text</label>
+                            <input type="text" class="form-control" value="🔥 CLEARANCE - Limited Stock!" placeholder="Enter banner text...">
                         </div>
-                        <div class="col-6">
-                            <label class="form-label">Expiry Date</label>
-                            <input type="date" name="notification_expiry" class="form-control" value="<?php echo esc_attr($edit_notification['expiry_date'] ?? ''); ?>">
-                        </div>
-                    </div>
-                    
-                    <button type="submit" name="woosync_save_notification" class="btn btn-success w-100">
-                        💾 <?php echo $edit_notification ? 'Update Notification' : 'Create Notification'; ?>
-                    </button>
-                </form>
-            </div>
-            
-            <div class="woosync-notification-preview mt-4">
-                <h4>Preview</h4>
-                <div id="preview_banner" class="woosync-notification-banner" style="background-color: <?php echo esc_attr($edit_notification['background_color'] ?? '#1a1a2e'); ?>;">
-                    <div class="woosync-notification-content">
-                        <span class="dashicons dashicons-info"></span>
-                        <div class="woosync-notification-text">
-                            <strong id="preview_title"><?php echo esc_html($edit_notification['title'] ?? 'Notification Title'); ?></strong>
-                            <p id="preview_message"><?php echo esc_html($edit_notification['message'] ?? 'Your notification message will appear here.'); ?></p>
-                        </div>
-                        <?php if (!empty($edit_notification['link'])): ?>
-                        <a href="#" id="preview_cta" class="woosync-notification-cta"><?php echo esc_html($edit_notification['cta_text'] ?? 'Learn More'); ?> →</a>
-                        <?php else: ?>
-                        <a href="#" id="preview_cta" class="woosync-notification-cta" style="display: none;">Learn More →</a>
-                        <?php endif; ?>
+                        <button class="btn btn-primary">💾 Save Banner Settings</button>
                     </div>
                 </div>
             </div>
-        </div>
-    </div>
-    <?php
-}
 
-function woosync_render_services_tab($notifications_obj) {
-    $services = $notifications_obj->get_services();
-    ?>
-    <div class="row">
-        <div class="col-md-8">
-            <div class="card">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">🛠️ Mediaplatform Services</h5>
-                    <a href="?page=woosync-promotions&tab=services&action=add" class="btn btn-primary btn-sm">
-                        ➕ Add Service
-                    </a>
+            <!-- Cross-Sell Configuration -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-warning text-dark">
+                        <h5 class="mb-0">🔗 Cross-Sell Rules</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted">Automatically link related products during sync.</p>
+                        <div class="alert alert-info">
+                            <small>Cross-sells are suggested based on category and brand matches.</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Cross-Sell Mode</label>
+                            <select class="form-select">
+                                <option>Same Category</option>
+                                <option>Same Brand</option>
+                                <option>Both Category & Brand</option>
+                                <option>Manual Selection</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Max Cross-Sells per Product</label>
+                            <input type="number" class="form-control" value="4" min="1" max="10">
+                        </div>
+                        <button class="btn btn-primary">💾 Save Cross-Sell Rules</button>
+                    </div>
                 </div>
-                <div class="card-body">
-                    <p class="text-muted mb-4">These services are displayed as cross-sell cards in the WooSync dashboard. They link to Mediaplatform's service pages.</p>
-                    
-                    <div class="woosync-services-grid">
-                        <?php foreach ($services as $service): ?>
-                            <div class="woosync-service-card <?php echo $service['enabled'] ? '' : 'opacity-50'; ?>">
-                                <div class="woosync-service-icon">
-                                    <span class="dashicons <?php echo esc_attr($service['icon'] ?? 'dashicons-admin-generic'); ?>"></span>
+            </div>
+        </div>
+
+        <!-- Notification Settings -->
+        <div class="row mt-3">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="mb-0">🔔 Sync Notifications</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="notifySyncComplete" checked>
+                                    <label class="form-check-label" for="notifySyncComplete">
+                                        Notify on Sync Complete
+                                    </label>
                                 </div>
-                                <h4><?php echo esc_html($service['title']); ?></h4>
-                                <p><?php echo esc_html($service['description']); ?></p>
-                                <div class="d-flex gap-2 align-items-center">
-                                    <?php if (!empty($service['link'])): ?>
-                                    <a href="<?php echo esc_url($service['link']); ?>" class="woosync-service-cta" target="_blank" rel="noopener">
-                                        <?php echo esc_html($service['cta_text'] ?? 'Learn More'); ?>
-                                    </a>
-                                    <?php endif; ?>
-                                    <form method="post" class="ms-auto">
-                                        <?php wp_nonce_field('woosync_notifications'); ?>
-                                        <input type="hidden" name="service_id" value="<?php echo esc_attr($service['id']); ?>">
-                                        <button type="submit" name="woosync_delete_service" class="btn btn-outline-danger btn-sm">Delete</button>
-                                    </form>
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="notifyErrors" checked>
+                                    <label class="form-check-label" for="notifyErrors">
+                                        Notify on Errors
+                                    </label>
+                                </div>
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="notifyLowStock">
+                                    <label class="form-check-label" for="notifyLowStock">
+                                        Notify on Low Stock
+                                    </label>
                                 </div>
                             </div>
-                        <?php endforeach; ?>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label class="form-label">Email for Notifications</label>
+                                    <input type="email" class="form-control" placeholder="admin@yoursite.com">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label class="form-label">Low Stock Threshold</label>
+                                    <input type="number" class="form-control" value="10" min="1">
+                                </div>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary">💾 Save Notification Settings</button>
                     </div>
                 </div>
-            </div>
-        </div>
-        
-        <div class="col-md-4">
-            <div class="woosync-notification-editor">
-                <h5 class="mb-3">➕ Add Service</h5>
-                
-                <form method="post">
-                    <?php wp_nonce_field('woosync_notifications'); ?>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">Service Title</label>
-                        <input type="text" name="service_title" class="form-control" required placeholder="Custom WooCommerce Development">
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">Description</label>
-                        <textarea name="service_description" class="form-control" rows="3" placeholder="Describe the service..."></textarea>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">Icon (Dashicons class)</label>
-                        <input type="text" name="service_icon" class="form-control" value="dashicons-admin-generic" placeholder="dashicons-cart">
-                        <small class="text-muted">Use Dashicons classes: dashicons-cart, dashicons-rest-api, dashicons-art, etc.</small>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">Link URL</label>
-                        <input type="url" name="service_link" class="form-control" placeholder="https://mediaplatform.co.za/services/...">
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">CTA Button Text</label>
-                        <input type="text" name="service_cta" class="form-control" value="Learn More" placeholder="Get a Quote">
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">
-                            <input type="checkbox" name="service_enabled" value="1" checked> Enable Service
-                        </label>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">
-                            <input type="checkbox" name="service_featured" value="1"> Featured (shown first)
-                        </label>
-                    </div>
-                    
-                    <button type="submit" name="woosync_save_service" class="btn btn-success w-100">
-                        💾 Add Service
-                    </button>
-                </form>
             </div>
         </div>
     </div>
     <?php
 }
 
+// ===== SETTINGS PAGE (Merged Settings + Updates) =====
+function amrod_render_settings_page() {
+    $username = get_option('amrod_username');
+    $password = !empty(get_option('amrod_password'));
+    $customer_code = get_option('amrod_customer_code');
+    $auth_url = get_option('amrod_auth_url', 'https://identity.amrod.co.za');
+    $api_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za');
+    $auto_update = get_option('amrod_auto_update', 1);
+    $batch_size = get_option('amrod_batch_size', 200);
+    $endpoints = amrod_get_endpoints();
+    ?>
+    <div class="container-fluid mt-4 amrod-container">
+        <?php amrod_breadcrumb(['Dashboard' => '?page=amrod-sync', 'Settings' => false]); ?>
+        
+        <!-- Header -->
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h1 class="mb-0">⚙️ Settings</h1>
+                <small class="text-muted">Credentials, auto-update, and plugin info</small>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- API Credentials -->
+            <div class="col-md-6">
+                <div class="card mb-3">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0">🔑 API Credentials</h5>
+                    </div>
+                    <div class="card-body">
+                        <form method="post" id="settingsForm">
+                            <?php wp_nonce_field('amrod_sync_nonce'); ?>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">Customer Code <span class="help-icon" data-bs-toggle="tooltip" title="Your Amrod customer/account code">?</span></label>
+                                <input type="text" name="amrod_customer_code" value="<?php echo esc_attr($customer_code); ?>" class="form-control" placeholder="MEDIAPLATFORM">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Username <span class="help-icon" data-bs-toggle="tooltip" title="Amrod API username">?</span></label>
+                                <input type="text" name="amrod_username" value="<?php echo esc_attr($username); ?>" class="form-control" placeholder="user@email.com">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Password <span class="help-icon" data-bs-toggle="tooltip" title="Amrod API password">?</span></label>
+                                <div class="input-group">
+                                    <input type="password" name="amrod_password" id="passwordField" class="form-control" placeholder="••••••••">
+                                    <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility()">👁</button>
+                                </div>
+                                <?php if ($password): ?>
+                                <small class="text-success">Password is set</small>
+                                <?php else: ?>
+                                <small class="text-warning">No password saved</small>
+                                <?php endif; ?>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Auth URL <span class="help-icon" data-bs-toggle="tooltip" title="Amrod identity/authentication endpoint">?</span></label>
+                                <input type="url" name="amrod_auth_url" value="<?php echo esc_attr($auth_url); ?>" class="form-control">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">API URL <span class="help-icon" data-bs-toggle="tooltip" title="Amrod vendor API base URL">?</span></label>
+                                <input type="url" name="amrod_api_url" value="<?php echo esc_attr($api_url); ?>" class="form-control">
+                            </div>
+                            <button type="submit" name="save_credentials" class="btn btn-success w-100">💾 Save Credentials</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sync Settings -->
+            <div class="col-md-6">
+                <div class="card mb-3">
+                    <div class="card-header bg-secondary text-white">
+                        <h5 class="mb-0">⚡ Sync Settings</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">Batch Size <span class="help-icon" data-bs-toggle="tooltip" title="Number of products to process per batch">?</span></label>
+                            <input type="number" name="amrod_batch_size" value="<?php echo $batch_size; ?>" min="50" max="500" class="form-control">
+                            <small class="text-muted">Recommended: 200</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Sync Schedule <span class="help-icon" data-bs-toggle="tooltip" title="How often to automatically sync">?</span></label>
+                            <select name="amrod_sync_schedule" class="form-select">
+                                <option value="manual">Manual Only</option>
+                                <option value="hourly">Every Hour</option>
+                                <option value="6hours">Every 6 Hours</option>
+                                <option value="12hours">Every 12 Hours</option>
+                                <option value="daily">Daily</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Auto-Update Toggle <span class="help-icon" data-bs-toggle="tooltip" title="Enable/disable automatic plugin updates">?</span></label>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="amrod_auto_update" value="1" <?php checked($auto_update); ?>>
+                                <label class="form-check-label">Enable Auto-Updates</label>
+                            </div>
+                        </div>
+                        <button type="submit" form="settingsForm" class="btn btn-primary w-100">💾 Save Settings</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Vendor Tier Settings -->
+        <?php 
+        $vendor_tier = amrod_get_vendor_tier('amrod');
+        $tier = $vendor_tier['tier'] ?? 'Standard';
+        $tier_notes = $vendor_tier['tier_notes'] ?? '';
+        $tier_pricing_endpoint = $vendor_tier['tier_pricing_endpoint'] ?? '/api/v1/Prices/';
+        $tier_active_since = $vendor_tier['tier_active_since'] ?? '';
+        $tier_expiry = $vendor_tier['tier_expiry'] ?? '';
+        $upgrade_url = $vendor_tier['upgrade_url'] ?? '';
+        $markup_percent = get_option('woosync_markup_percent', 30);
+        ?>
+        <div class="card mb-3 border-warning">
+            <div class="card-header bg-warning text-dark">
+                <h5 class="mb-0">🏆 Vendor Tier Settings</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label">Pricing Tier</label>
+                            <select name="woosync_vendor_tier" class="form-select" id="tierSelect">
+                                <option value="Standard" <?php selected($tier, 'Standard'); ?>>📋 Standard</option>
+                                <option value="Bronze" <?php selected($tier, 'Bronze'); ?>>🥉 Bronze</option>
+                                <option value="Silver" <?php selected($tier, 'Silver'); ?>>🥈 Silver</option>
+                                <option value="Gold" <?php selected($tier, 'Gold'); ?>>🏆 Gold</option>
+                                <option value="Platinum" <?php selected($tier, 'Platinum'); ?>>💎 Platinum</option>
+                            </select>
+                            <small class="text-muted">Select your pricing tier level. Auto-detected from API if available.</small>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label">Tier Pricing Endpoint</label>
+                            <input type="text" name="woosync_tier_pricing_endpoint" 
+                                   id="tierPricingEndpoint"
+                                   value="<?php echo esc_attr($tier_pricing_endpoint); ?>" 
+                                   class="form-control" 
+                                   placeholder="/api/v1/Prices/">
+                            <small class="text-muted">API endpoint for tier-specific pricing (Amrod: /api/v1/Prices/)</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label class="form-label">Tier Active Since</label>
+                            <input type="text" class="form-control" value="<?php echo $tier_active_since ?: 'Not set'; ?>" readonly>
+                            <small class="text-muted">When this tier was first detected</small>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label class="form-label">Tier Expiry</label>
+                            <input type="text" class="form-control" value="<?php echo $tier_expiry ?: 'No expiry'; ?>" readonly>
+                            <small class="text-muted">When this tier expires (if applicable)</small>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label class="form-label">WooSync Markup %</label>
+                            <input type="number" name="woosync_markup_percent" 
+                                   id="markupPercent"
+                                   value="<?php echo esc_attr($markup_percent); ?>" 
+                                   class="form-control" 
+                                   min="0" max="200" step="0.5">
+                            <small class="text-muted">Markup added to your tier price</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Tier Notes (Internal)</label>
+                    <textarea name="woosync_tier_notes" id="tierNotes" class="form-control" rows="2" 
+                              placeholder="Internal notes about this tier..."><?php echo esc_textarea($tier_notes); ?></textarea>
+                </div>
+                <?php if (!empty($upgrade_url)): ?>
+                <div class="alert alert-info">
+                    <a href="<?php echo esc_url($upgrade_url); ?>" target="_blank" class="alert-link">
+                        🔗 Upgrade Your Tier →
+                    </a>
+                </div>
+                <?php endif; ?>
+                <div class="d-flex gap-2">
+                    <button type="button" id="saveTierSettingsBtn" class="btn btn-warning">
+                        💾 Save Tier Settings
+                    </button>
+                    <button type="button" id="refreshTierStatusBtn" class="btn btn-outline-secondary">
+                        🔄 Refresh from API
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Help & Documentation -->
+        <div class="docs-section">
+            <h5>📖 Help & Documentation</h5>
+            <p class="text-muted small mb-3">Access documentation and support resources for WooSync and connected vendors.</p>
+            <div class="d-flex flex-wrap gap-2">
+                <a href="https://newapidocs.amrod.co.za" target="_blank" class="docs-btn docs-btn-primary">
+                    📖 Amrod API Docs
+                </a>
+                <a href="https://woocommerce.com/document/rest-api/" target="_blank" class="docs-btn docs-btn-outline">
+                    🛒 WooCommerce REST API
+                </a>
+                <a href="https://mediaplatform.co.za/woosync-docs" target="_blank" class="docs-btn docs-btn-outline">
+                    📚 WooSync User Guide
+                </a>
+                <a href="https://mediaplatform.co.za/support" target="_blank" class="docs-btn docs-btn-outline">
+                    💬 Get Support
+                </a>
+            </div>
+        </div>
+
+        <!-- Plugin Info -->
+
+        <div class="card">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0">ℹ️ Plugin Information</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <p class="mb-1"><strong>Version:</strong> <?php echo AMROD_SYNC_VERSION; ?></p>
+                        <p class="mb-1"><strong>Author:</strong> Mediaplatform</p>
+                        <p class="mb-1"><strong>Website:</strong> <a href="https://mediaplatform.co.za" target="_blank">mediaplatform.co.za</a></p>
+                    </div>
+                    <div class="col-md-4">
+                        <p class="mb-1"><strong>WooCommerce:</strong> <?php echo class_exists('WooCommerce') ? '✅ Active' : '❌ Not Found'; ?></p>
+                        <p class="mb-1"><strong>PHP Version:</strong> <?php echo PHP_VERSION; ?></p>
+                        <p class="mb-1"><strong>WordPress:</strong> <?php global $wp_version; echo $wp_version; ?></p>
+                    </div>
+                    <div class="col-md-4">
+                        <p class="mb-1"><strong>Last Sync:</strong> <?php echo get_option('amrod_last_sync') ?: 'Never'; ?></p>
+                        <p class="mb-1"><strong>Total Products:</strong> <?php echo number_format(get_option('amrod_total_products', 0)); ?></p>
+                        <p class="mb-1"><strong>API Endpoints:</strong> <?php echo count(array_filter($endpoints, fn($e) => $e['enabled'])); ?> enabled</p>
+                    </div>
+                </div>
+                <hr>
+                <div class="d-flex gap-2">
+                    <a href="https://mediaplatform.co.za/support" target="_blank" class="btn btn-outline-primary">📖 Documentation</a>
+                    <a href="https://mediaplatform.co.za/support" target="_blank" class="btn btn-outline-secondary">💬 Get Support</a>
+                    <form method="post" class="d-inline ms-auto">
+                        <?php wp_nonce_field('amrod_sync_nonce'); ?>
+                        <button type="submit" name="reset_all" class="btn btn-outline-danger" onclick="return confirm('Are you sure? This will clear all settings and logs.');">🗑️ Reset Plugin</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php
+}
 
 // ===== HANDLE POST REQUESTS =====
-add_action('admin_init', 'woosync_handle_post_requests');
-function woosync_handle_post_requests() {
+add_action('admin_init', function() {
     if (empty($_POST)) return;
     if (!current_user_can('manage_options')) return;
-    if (!wp_verify_nonce($_POST['_wpnonce'] ?? '', 'woosync_nonce') && 
-        !wp_verify_nonce($_POST['_wpnonce'] ?? '', 'woosync_wizard')) return;
+    if (!wp_verify_nonce($_POST['_wpnonce'] ?? '', 'amrod_sync_nonce')) return;
 
-    // Save vendor
-    if (isset($_POST['save_vendor'])) {
-        $vendor_data = [
-            'name' => sanitize_text_field($_POST['vendor_name'] ?? ''),
-            'slug' => sanitize_key($_POST['vendor_slug'] ?? ''),
-            'api_url' => esc_url_raw($_POST['api_url'] ?? ''),
-            'auth_url' => esc_url_raw($_POST['auth_url'] ?? ''),
-            'auth_type' => sanitize_key($_POST['auth_type'] ?? 'vendor_login'),
-            'sync_mode' => sanitize_key($_POST['sync_mode'] ?? 'full'),
-            'enabled' => isset($_POST['enabled']),
-            'username' => sanitize_text_field($_POST['username'] ?? ''),
-            'password' => sanitize_text_field($_POST['password'] ?? ''),
-            'api_key' => sanitize_text_field($_POST['api_key'] ?? ''),
-            'customer_code' => sanitize_text_field($_POST['customer_code'] ?? ''),
-        ];
+    if (isset($_POST['save_credentials'])) {
+        update_option('amrod_username', sanitize_text_field($_POST['amrod_username'] ?? ''));
+        update_option('amrod_password', sanitize_text_field($_POST['amrod_password'] ?? ''));
+        update_option('amrod_customer_code', sanitize_text_field($_POST['amrod_customer_code'] ?? ''));
+        update_option('amrod_auth_url', esc_url_raw($_POST['amrod_auth_url'] ?? 'https://identity.amrod.co.za'));
+        update_option('amrod_api_url', esc_url_raw($_POST['amrod_api_url'] ?? 'https://vendorapi.amrod.co.za'));
+        wp_safe_redirect(add_query_arg('updated', '1'));
+        exit;
+    }
+
+    if (isset($_POST['save_settings'])) {
+        update_option('amrod_batch_size', intval($_POST['amrod_batch_size'] ?? 200));
+        update_option('amrod_sync_schedule', sanitize_text_field($_POST['amrod_sync_schedule'] ?? 'manual'));
+        update_option('amrod_auto_update', isset($_POST['amrod_auto_update']) ? 1 : 0);
+        wp_safe_redirect(add_query_arg('updated', '1'));
+        exit;
+    }
+
+    if (isset($_POST['clear_log'])) {
+        delete_option('amrod_sync_log');
+        wp_safe_redirect(add_query_arg('cleared', '1'));
+        exit;
+    }
+
+    if (isset($_POST['reset_all'])) {
+        $options = ['amrod_username', 'amrod_password', 'amrod_customer_code', 'amrod_auth_url', 'amrod_api_url', 'amrod_docs_url', 'amrod_endpoints', 'amrod_field_mapping', 'amrod_sync_log', 'amrod_last_sync', 'amrod_total_products', 'amrod_last_token_fetched', 'amrod_sync_schedule', 'amrod_batch_size', 'amrod_auto_update', 'amrod_mapped_fields'];
+        foreach ($options as $opt) delete_option($opt);
+        wp_safe_redirect(add_query_arg('reset', '1'));
+        exit;
+    }
+});
+
+// ===== UNINSTALL =====
+register_uninstall_hook(__FILE__, function() {
+    $options = ['amrod_username', 'amrod_password', 'amrod_customer_code', 'amrod_auth_url', 'amrod_api_url', 'amrod_docs_url', 'amrod_endpoints', 'amrod_field_mapping', 'amrod_sync_log', 'amrod_last_sync', 'amrod_total_products', 'amrod_last_token_fetched', 'amrod_sync_schedule', 'amrod_batch_size', 'amrod_auto_update', 'amrod_mapped_fields'];
+    foreach ($options as $opt) delete_option($opt);
+});
+
+// ===== AJAX HANDLERS =====
+
+// Test Connection AJAX
+// Get credential schema for a vendor (AJAX)
+add_action('wp_ajax_amrod_get_credential_schema', 'amrod_ajax_get_credential_schema');
+function amrod_ajax_get_credential_schema() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? 'amrod');
+    $schema = amrod_get_credential_schema($vendor_id);
+    
+    wp_send_json_success([
+        'schema' => $schema,
+        'vendor_id' => $vendor_id,
+    ]);
+}
+
+// Test Connection AJAX (handles all vendor types)
+add_action('wp_ajax_amrod_test_connection', 'amrod_ajax_test_connection');
+function amrod_ajax_test_connection() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? 'amrod');
+    $schema = amrod_get_credential_schema($vendor_id);
+    $auth_type = $schema['auth_type'] ?? 'vendor_login';
+    
+    if ($auth_type === 'vendor_login') {
+        // Amrod-style vendor login
+        $username = sanitize_text_field($_POST['username'] ?? '');
+        $password = sanitize_text_field($_POST['password'] ?? '');
+        $customer_code = sanitize_text_field($_POST['customer_code'] ?? '');
+        $auth_url = esc_url_raw($_POST['auth_url'] ?? 'https://identity.amrod.co.za') . '/VendorLogin';
         
-        // Handle existing vendor update
-        if (!empty($_POST['vendor_id'])) {
-            $existing = woosync_get_vendor_by_id($_POST['vendor_id']);
-            if ($existing) {
-                $vendor_data = array_merge($existing, $vendor_data);
+        if (empty($username) || empty($password) || empty($customer_code)) {
+            wp_send_json_error('Username, password, and customer code are required for Amrod vendor login');
+        }
+
+        $payload = json_encode([
+            'username' => $username,
+            'password' => $password,
+            'CustomerCode' => $customer_code
+        ]);
+
+        $response = wp_remote_post($auth_url, [
+            'headers' => ['Content-Type' => 'application/json'],
+            'body' => $payload,
+            'timeout' => 20,
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_send_json_error('Connection failed: ' . $response->get_error_message());
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        if ($code === 200) {
+            $data = json_decode(wp_remote_retrieve_body($response), true);
+            if (isset($data['token'])) {
+                wp_send_json_success(['message' => 'Connection successful!', 'token' => substr($data['token'], 0, 10) . '...']);
             }
         }
+        wp_send_json_error('Invalid credentials (HTTP ' . $code . ')');
         
-        woosync_save_vendor($vendor_data);
-        wp_safe_redirect(add_query_arg(['page' => 'woosync-vendors', 'updated' => '1']));
-        exit;
-    }
-
-    // Save endpoints
-    if (isset($_POST['save_endpoints'])) {
-        $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? '');
-        $vendor = woosync_get_vendor_by_id($vendor_id);
+    } elseif ($auth_type === 'bearer_key') {
+        // SMD-style Bearer Token + ClientAccessKey
+        $api_base_url = esc_url_raw($_POST['api_base_url'] ?? 'https://api.smdtechnologies.com/v1/');
+        $bearer_token = sanitize_text_field($_POST['bearer_token'] ?? '');
+        $client_access_key = sanitize_text_field($_POST['client_access_key'] ?? '');
         
-        if ($vendor && !empty($_POST['endpoints'])) {
-            $vendor['endpoints'] = json_encode($_POST['endpoints']);
-            woosync_save_vendor($vendor);
-            wp_safe_redirect(add_query_arg(['page' => 'woosync-vendors', 'action' => 'edit', 'vendor' => $vendor_id, 'updated' => '1']));
-            exit;
+        if (empty($bearer_token) || empty($client_access_key)) {
+            wp_send_json_error('Bearer Token and Client Access Key are required for SMD');
         }
-    }
 
-    // Save field mapping
-    if (isset($_POST['save_mapping'])) {
-        $active_vendor = woosync_get_active_vendor();
-        if ($active_vendor && !empty($_POST['mapping'])) {
-            $active_vendor['field_mapping'] = json_encode($_POST['mapping']);
-            woosync_save_vendor($active_vendor);
-            wp_safe_redirect(add_query_arg(['page' => 'woosync', 'tab' => 'mapping', 'updated' => '1']));
-            exit;
+        $response = wp_remote_get($api_base_url . '/products', [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $bearer_token,
+                'ClientAccessKey' => $client_access_key,
+                'Content-Type' => 'application/json',
+            ],
+            'timeout' => 20,
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_send_json_error('Connection failed: ' . $response->get_error_message());
         }
-    }
 
-    // Save global settings
-    if (isset($_POST['save_global_settings'])) {
-        update_option('woosync_batch_size', intval($_POST['batch_size'] ?? 200));
-        update_option('woosync_sync_schedule', sanitize_key($_POST['sync_schedule'] ?? ''));
-        update_option('woosync_log_retain_days', intval($_POST['log_retain_days'] ?? 30));
-        wp_safe_redirect(add_query_arg(['page' => 'woosync', 'tab' => 'settings', 'updated' => '1']));
-        exit;
-    }
-
-    // Save vendor settings
-    if (isset($_POST['save_vendor_settings'])) {
-        $active_vendor = woosync_get_active_vendor();
-        if ($active_vendor) {
-            $active_vendor['api_url'] = esc_url_raw($_POST['api_url'] ?? '');
-            $active_vendor['auth_url'] = esc_url_raw($_POST['auth_url'] ?? '');
-            $active_vendor['sync_mode'] = sanitize_key($_POST['sync_mode'] ?? 'full');
-            woosync_save_vendor($active_vendor);
-            wp_safe_redirect(add_query_arg(['page' => 'woosync', 'tab' => 'settings', 'updated' => '1']));
-            exit;
+        $code = wp_remote_retrieve_response_code($response);
+        if ($code === 200) {
+            wp_send_json_success(['message' => 'SMD connection successful!']);
         }
-    }
+        wp_send_json_error('SMD API error (HTTP ' . $code . ')');
+        
+    } else {
+        // Custom auth - try GET on API base URL with provided auth
+        $api_base_url = esc_url_raw($_POST['api_base_url'] ?? '');
+        $bearer_token = sanitize_text_field($_POST['bearer_token'] ?? '');
+        $api_key = sanitize_text_field($_POST['api_key'] ?? '');
+        $username = sanitize_text_field($_POST['username'] ?? '');
+        $password = sanitize_text_field($_POST['password'] ?? '');
+        
+        if (empty($api_base_url)) {
+            wp_send_json_error('API Base URL is required');
+        }
 
-    // Clear log
-    if (isset($_POST['clear_log'])) {
-        update_option('woosync_sync_log', []);
-        wp_safe_redirect(add_query_arg(['page' => 'woosync-log', 'cleared' => '1']));
-        exit;
-    }
+        $headers = ['Content-Type' => 'application/json'];
+        
+        if (!empty($bearer_token)) {
+            $headers['Authorization'] = 'Bearer ' . $bearer_token;
+        }
+        if (!empty($api_key)) {
+            $headers['X-API-Key'] = $api_key;
+        }
+        
+        $response = wp_remote_get($api_base_url, [
+            'headers' => $headers,
+            'timeout' => 20,
+        ]);
 
-    // Wizard completion
-    if (isset($_POST['wizard_complete'])) {
-        update_option('woosync_wizard_completed', true);
-        wp_safe_redirect(admin_url('admin.php?page=woosync'));
-        exit;
+        if (is_wp_error($response)) {
+            wp_send_json_error('Connection failed: ' . $response->get_error_message());
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        if ($code >= 200 && $code < 300) {
+            wp_send_json_success(['message' => 'Custom API connection successful!']);
+        }
+        wp_send_json_error('Custom API error (HTTP ' . $code . ')');
     }
 }
 
-// ===== SYNC LOG =====
-function woosync_sync_log($message) {
-    $log = (array) get_option('woosync_sync_log', []);
-    $log[] = '[' . current_time('mysql') . '] ' . $message;
-    $log = array_slice($log, -500); // Keep last 500 entries
-    update_option('woosync_sync_log', $log);
+
+// Save Credentials Simple AJAX (used by wizard - handles all vendor types)
+add_action('wp_ajax_amrod_save_credentials_simple', 'amrod_ajax_save_credentials_simple');
+function amrod_ajax_save_credentials_simple() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? 'amrod');
+    $schema = amrod_get_credential_schema($vendor_id);
+    $auth_type = $schema['auth_type'] ?? 'vendor_login';
+    
+    // Get all posted fields
+    $posted_fields = $_POST;
+    
+    // Validate required fields for this vendor type
+    $errors = [];
+    foreach ($schema['fields'] as $field) {
+        if ($field['required']) {
+            $key = $field['key'];
+            $value = $posted_fields[$key] ?? '';
+            if (empty($value)) {
+                $errors[] = $field['label'] . ' is required';
+            }
+        }
+    }
+    
+    if (!empty($errors)) {
+        wp_send_json_error('Please fill in required fields: ' . implode(', ', $errors));
+    }
+    
+    // Build credentials array for this vendor
+    $credentials = [
+        'vendor_id' => $vendor_id,
+        'auth_type' => $auth_type,
+        'saved_at' => current_time('mysql'),
+    ];
+    
+    // Save only the fields relevant to this vendor (and non-empty)
+    foreach ($schema['fields'] as $field) {
+        $key = $field['key'];
+        $value = $posted_fields[$key] ?? '';
+        
+        if (!empty($value)) {
+            if ($field['type'] === 'password') {
+                // Store passwords with encryption note (in production, use proper encryption)
+                $credentials[$key] = $value;
+            } else {
+                $credentials[$key] = sanitize_text_field($value);
+            }
+        }
+    }
+    
+    // Store per-vendor credentials
+    $vendor_creds = get_option('woosync_vendor_credentials', []);
+    if (!is_array($vendor_creds)) $vendor_creds = [];
+    $vendor_creds[$vendor_id] = $credentials;
+    update_option('woosync_vendor_credentials', $vendor_creds);
+    
+    // Also update legacy options for Amrod (for backward compatibility)
+    if ($vendor_id === 'amrod') {
+        if (!empty($posted_fields['username'])) update_option('amrod_username', sanitize_text_field($posted_fields['username']));
+        if (!empty($posted_fields['password'])) update_option('amrod_password', sanitize_text_field($posted_fields['password']));
+        if (!empty($posted_fields['customer_code'])) update_option('amrod_customer_code', sanitize_text_field($posted_fields['customer_code']));
+        if (!empty($posted_fields['auth_url'])) update_option('amrod_auth_url', esc_url_raw($posted_fields['auth_url']));
+        if (!empty($posted_fields['api_base_url'])) update_option('amrod_api_url', esc_url_raw($posted_fields['api_base_url']));
+    }
+    
+    // Store vendor in vendors list
+    $vendors = get_option('woosync_vendors', []);
+    if (!is_array($vendors)) $vendors = [];
+    $vendors[$vendor_id] = array_merge($vendors[$vendor_id] ?? [], [
+        'connected' => true,
+        'connected_at' => current_time('mysql'),
+        'auth_type' => $auth_type,
+    ]);
+    update_option('woosync_vendors', $vendors);
+    
+    wp_send_json_success(['message' => 'Credentials saved successfully!', 'vendor_id' => $vendor_id]);
 }
 
-// ===== API FUNCTIONS =====
-function woosync_get_token($vendor) {
-    $cached = get_transient('woosync_token_' . $vendor['id']);
+
+// Fetch Token AJAX
+add_action('wp_ajax_amrod_fetch_token', 'amrod_ajax_fetch_token');
+function amrod_ajax_fetch_token() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $token = amrod_get_token();
+    if ($token) {
+        update_option('amrod_last_token_fetched', current_time('mysql'));
+        wp_send_json_success(['token' => amrod_mask_token_for_display($token)]);
+    } else {
+        wp_send_json_error('Failed to fetch token');
+    }
+}
+
+// Sync Batch AJAX
+add_action('wp_ajax_amrod_sync_batch', 'amrod_ajax_sync_batch');
+function amrod_ajax_sync_batch() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $offset = intval($_POST['offset'] ?? 0);
+    $batch_size = intval($_POST['batch_size'] ?? 200);
+    
+    $result = amrod_sync_process_batch($offset, $batch_size);
+    wp_send_json_success($result);
+}
+
+// Search Products AJAX (with fuzzy matching)
+add_action('wp_ajax_amrod_search_products', 'amrod_ajax_search_products');
+function amrod_ajax_search_products() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $query = sanitize_text_field($_POST['query'] ?? '');
+    
+    $token = amrod_get_token();
+    if (!$token) {
+        wp_send_json_error('Failed to obtain token');
+    }
+
+    $endpoints = amrod_get_endpoints();
+    $products_ep = $endpoints['products'] ?? null;
+    
+    if (!$products_ep || !$products_ep['enabled']) {
+        wp_send_json_error('Products endpoint not enabled');
+    }
+
+    $products_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
+    $products = amrod_get_endpoint($token, $products_url);
+    
+    if ($products === false || !is_array($products)) {
+        wp_send_json_error('Failed to fetch products');
+    }
+
+    // Fuzzy search matching
+    $query_lower = strtolower($query);
+    $results = [];
+    
+    foreach ($products as $product) {
+        $name = strtolower($product['Description'] ?? '');
+        $sku = strtolower($product['ProductCode'] ?? '');
+        
+        // Exact match
+        if ($query_lower === '' || $query_lower === $name || $query_lower === $sku) {
+            $results[] = $product;
+            continue;
+        }
+        
+        // Contains match
+        if (strpos($name, $query_lower) !== false || strpos($sku, $query_lower) !== false) {
+            $results[] = $product;
+            continue;
+        }
+        
+        // Fuzzy match - check if all query words match
+        $query_words = array_filter(explode(' ', $query_lower));
+        $match_count = 0;
+        foreach ($query_words as $word) {
+            if (strlen($word) >= 2 && (strpos($name, $word) !== false || strpos($sku, $word) !== false)) {
+                $match_count++;
+            }
+        }
+        if ($match_count === count($query_words) && count($query_words) > 0) {
+            $results[] = $product;
+        }
+    }
+
+    // Limit results
+    $results = array_slice($results, 0, 50);
+    
+    // Format for display
+    $formatted = array_map(function($p) {
+        return [
+            'id' => $p['ProductCode'] ?? '',
+            'name' => $p['Description'] ?? 'Unknown',
+            'sku' => $p['ProductCode'] ?? '',
+            'price' => $p['Price'] ?? 0,
+            'image' => $p['ImageURL'] ?? '',
+            'category' => $p['CategoryName'] ?? '',
+        ];
+    }, $results);
+
+    wp_send_json_success(['products' => $formatted, 'total' => count($results)]);
+}
+
+// Get Product Preview AJAX
+add_action('wp_ajax_amrod_get_product_preview', 'amrod_ajax_get_product_preview');
+function amrod_ajax_get_product_preview() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $product_code = sanitize_text_field($_POST['product_code'] ?? '');
+    
+    $token = amrod_get_token();
+    if (!$token) {
+        wp_send_json_error('Failed to obtain token');
+    }
+
+    $endpoints = amrod_get_endpoints();
+    $products_ep = $endpoints['products'] ?? null;
+    
+    if (!$products_ep || !$products_ep['enabled']) {
+        wp_send_json_error('Products endpoint not enabled');
+    }
+
+    $products_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
+    $products = amrod_get_endpoint($token, $products_url);
+    
+    if ($products === false || !is_array($products)) {
+        wp_send_json_error('Failed to fetch products');
+    }
+
+    // Find the product
+    foreach ($products as $product) {
+        if (($product['ProductCode'] ?? '') === $product_code) {
+            $mapping = get_option('amrod_field_mapping', []);
+            $preview = amrod_generate_preview($product, $mapping);
+            wp_send_json_success($preview);
+        }
+    }
+    
+    wp_send_json_error('Product not found');
+}
+
+// Auto-detect fields AJAX
+add_action('wp_ajax_amrod_auto_detect_fields', 'amrod_ajax_auto_detect_fields');
+function amrod_ajax_auto_detect_fields() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $token = amrod_get_token();
+    if (!$token) {
+        wp_send_json_error('Failed to fetch token');
+    }
+
+    $endpoints = amrod_get_endpoints();
+    $products_ep = $endpoints['products'] ?? null;
+    
+    if (!$products_ep || !$products_ep['enabled']) {
+        wp_send_json_error('Products endpoint not enabled');
+    }
+
+    $products_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
+    $products = amrod_get_endpoint($token, $products_url);
+    
+    if ($products === false || !is_array($products) || empty($products)) {
+        wp_send_json_error('Failed to fetch products');
+    }
+
+    $sample = $products[0];
+    $fields = array_keys($sample);
+    
+    $mapping = [];
+    $rules = amrod_get_field_mapping_rules();
+    
+    foreach ($rules as $wc_key => $rule) {
+        foreach ($rule['patterns'] as $pattern) {
+            if (in_array($pattern, $fields)) {
+                $mapping[$wc_key] = $pattern;
+                break;
+            }
+        }
+    }
+    
+    wp_send_json_success([
+        'fields' => $fields,
+        'mapping' => $mapping,
+        'sample_product' => $sample
+    ]);
+}
+
+// Save field mapping AJAX
+add_action('wp_ajax_amrod_save_field_mapping', 'amrod_ajax_save_field_mapping');
+function amrod_ajax_save_field_mapping() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $mapping = $_POST['mapping'] ?? [];
+    update_option('amrod_field_mapping', $mapping);
+    update_option('amrod_mapped_fields', count(array_filter($mapping)));
+    
+    wp_send_json_success(['message' => 'Field mapping saved successfully']);
+}
+
+// Save endpoint AJAX
+add_action('wp_ajax_amrod_save_endpoint', 'amrod_ajax_save_endpoint');
+function amrod_ajax_save_endpoint() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $endpoint_key = sanitize_text_field($_POST['endpoint'] ?? '');
+    $enabled = intval($_POST['enabled'] ?? 0);
+    
+    $endpoints = amrod_get_endpoints();
+    if (isset($endpoints[$endpoint_key])) {
+        $endpoints[$endpoint_key]['enabled'] = $enabled;
+        amrod_save_endpoints($endpoints);
+        wp_send_json_success(['message' => 'Endpoint updated']);
+    }
+    
+    wp_send_json_error('Endpoint not found');
+}
+
+// Refresh Tier Status AJAX
+add_action('wp_ajax_amrod_refresh_tier_status', 'amrod_ajax_refresh_tier_status');
+function amrod_ajax_refresh_tier_status() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? 'amrod');
+    
+    $token = amrod_get_token();
+    if (!$token) {
+        wp_send_json_error('Failed to obtain token');
+    }
+    
+    $auth_url = get_option('amrod_auth_url', 'https://identity.amrod.co.za') . '/VendorLogin';
+    $payload = json_encode([
+        'username' => get_option('amrod_username'),
+        'password' => amrod_get_password(),
+        'CustomerCode' => get_option('amrod_customer_code')
+    ]);
+
+    $response = wp_remote_post($auth_url, [
+        'headers' => ['Content-Type' => 'application/json'],
+        'body' => $payload,
+        'timeout' => 20,
+    ]);
+
+    $tier_data = [
+        'tier' => 'Standard',
+        'tier_level' => 0,
+        'tier_active_since' => current_time('mysql'),
+    ];
+    
+    if (!is_wp_error($response)) {
+        $code = wp_remote_retrieve_response_code($response);
+        if ($code === 200) {
+            $data = json_decode(wp_remote_retrieve_body($response), true);
+            
+            if (isset($data['tier'])) {
+                $tier_data['tier'] = $data['tier'];
+            } elseif (isset($data['pricingLevel'])) {
+                $tier_data['tier'] = $data['pricingLevel'];
+            } elseif (isset($data['customerTier'])) {
+                $tier_data['tier'] = $data['customerTier'];
+            } elseif (isset($data['PricingLevel'])) {
+                $tier_data['tier'] = $data['PricingLevel'];
+            }
+            
+            $tier_data['tier_level'] = amrod_get_tier_level($tier_data['tier']);
+            
+            if (isset($data['tierExpiry']) || isset($data['ExpiryDate'])) {
+                $tier_data['tier_expiry'] = $data['tierExpiry'] ?? $data['ExpiryDate'];
+            }
+            
+            if (isset($data['upgradeUrl']) || isset($data['upgrade_url'])) {
+                $tier_data['upgrade_url'] = $data['upgradeUrl'] ?? $data['upgrade_url'];
+            }
+        }
+    }
+    
+    amrod_save_vendor_tier($vendor_id, $tier_data);
+    
+    wp_send_json_success([
+        'message' => 'Tier status refreshed',
+        'tier' => $tier_data['tier'],
+        'tier_level' => $tier_data['tier_level']
+    ]);
+}
+
+// Save Tier Settings AJAX
+add_action('wp_ajax_amrod_save_tier_settings', 'amrod_ajax_save_tier_settings');
+function amrod_ajax_save_tier_settings() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? 'amrod');
+    $tier = sanitize_text_field($_POST['tier'] ?? 'Standard');
+    $tier_notes = sanitize_textarea_field($_POST['tier_notes'] ?? '');
+    $tier_pricing_endpoint = sanitize_text_field($_POST['tier_pricing_endpoint'] ?? '/api/v1/Prices/');
+    $markup_percent = floatval($_POST['markup_percent'] ?? 30);
+    
+    $tier_data = [
+        'tier' => $tier,
+        'tier_level' => amrod_get_tier_level($tier),
+        'tier_notes' => $tier_notes,
+        'tier_pricing_endpoint' => $tier_pricing_endpoint,
+        'tier_active_since' => current_time('mysql'),
+    ];
+    
+    amrod_save_vendor_tier($vendor_id, $tier_data);
+    update_option('woosync_markup_percent', $markup_percent);
+    
+    wp_send_json_success(['message' => 'Tier settings saved']);
+}
+
+// Get Tier Savings AJAX
+add_action('wp_ajax_amrod_get_tier_savings', 'amrod_ajax_get_tier_savings');
+function amrod_ajax_get_tier_savings() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $vendor_tier = amrod_get_vendor_tier('amrod');
+    $tier = $vendor_tier['tier'] ?? 'Standard';
+    
+    if ($tier === 'Standard') {
+        wp_send_json_success([
+            'products' => [],
+            'total_savings' => 0,
+            'product_count' => 0,
+            'message' => 'Standard tier - no savings'
+        ]);
+    }
+    
+    $token = amrod_get_token();
+    if (!$token) {
+        wp_send_json_error('Failed to obtain token');
+    }
+    
+    $endpoints = amrod_get_endpoints();
+    $products_ep = $endpoints['products'] ?? null;
+    $prices_ep = $endpoints['prices'] ?? null;
+    
+    if (!$products_ep || !$products_ep['enabled']) {
+        wp_send_json_error('Products endpoint not enabled');
+    }
+    
+    $api_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za');
+    
+    $products_url = $api_url . $products_ep['path'];
+    $products = amrod_get_endpoint($token, $products_url);
+    
+    if ($products === false || !is_array($products)) {
+        wp_send_json_error('Failed to fetch products');
+    }
+    
+    $tier_prices = [];
+    if ($prices_ep && $prices_ep['enabled']) {
+        $prices_url = $api_url . $prices_ep['path'];
+        $prices = amrod_get_endpoint($token, $prices_url);
+        if ($prices && is_array($prices)) {
+            foreach ($prices as $price_item) {
+                $code = $price_item['ProductCode'] ?? $price_item['ItemCode'] ?? '';
+                $tier_prices[$code] = floatval($price_item['Price'] ?? $price_item['TierPrice'] ?? 0);
+            }
+        }
+    }
+    
+    $savings = [];
+    $total_savings = 0;
+    $mapping = get_option('amrod_field_mapping', []);
+    
+    foreach ($products as $product) {
+        $code = $product[$mapping['sku'] ?? 'ProductCode'] ?? '';
+        $name = $product[$mapping['name'] ?? 'Description'] ?? 'Unknown';
+        $standard_price = floatval($product[$mapping['price'] ?? 'Price'] ?? 0);
+        $tier_price = $tier_prices[$code] ?? $standard_price;
+        
+        if ($tier_price < $standard_price && $tier_price > 0) {
+            $savings_per_unit = $standard_price - $tier_price;
+            $total_savings += $savings_per_unit;
+            
+            $savings[] = [
+                'code' => $code,
+                'name' => $name,
+                'standard_price' => $standard_price,
+                'tier_price' => $tier_price,
+                'savings_per_unit' => $savings_per_unit,
+                'savings_percent' => round(($savings_per_unit / $standard_price) * 100, 1),
+            ];
+        }
+    }
+    
+    usort($savings, function($a, $b) {
+        return $b['savings_per_unit'] <=> $a['savings_per_unit'];
+    });
+    
+    wp_send_json_success([
+        'products' => array_slice($savings, 0, 100),
+        'total_savings' => $total_savings,
+        'product_count' => count($savings),
+        'tier' => $tier
+    ]);
+}
+
+// Get Product Preview with Tier AJAX
+add_action('wp_ajax_amrod_get_product_preview_tier', 'amrod_ajax_get_product_preview_tier');
+function amrod_ajax_get_product_preview_tier() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $product_code = sanitize_text_field($_POST['product_code'] ?? '');
+    
+    $token = amrod_get_token();
+    if (!$token) {
+        wp_send_json_error('Failed to obtain token');
+    }
+
+    $endpoints = amrod_get_endpoints();
+    $products_ep = $endpoints['products'] ?? null;
+    
+    if (!$products_ep || !$products_ep['enabled']) {
+        wp_send_json_error('Products endpoint not enabled');
+    }
+
+    $products_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
+    $products = amrod_get_endpoint($token, $products_url);
+    
+    if ($products === false || !is_array($products)) {
+        wp_send_json_error('Failed to fetch products');
+    }
+
+    foreach ($products as $product) {
+        if (($product['ProductCode'] ?? '') === $product_code) {
+            $mapping = get_option('amrod_field_mapping', []);
+            $vendor_tier = amrod_get_vendor_tier('amrod');
+            $preview = amrod_generate_preview_with_tier($product, $mapping, $vendor_tier);
+            wp_send_json_success($preview);
+        }
+    }
+    
+    wp_send_json_error('Product not found');
+}
+
+// Sync single product AJAX
+add_action('wp_ajax_amrod_sync_single_product', 'amrod_ajax_sync_single_product');
+function amrod_ajax_sync_single_product() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $product_code = sanitize_text_field($_POST['product_code'] ?? '');
+    
+    $token = amrod_get_token();
+    if (!$token) {
+        wp_send_json_error('Failed to obtain token');
+    }
+
+    $endpoints = amrod_get_endpoints();
+    $products_ep = $endpoints['products'] ?? null;
+    
+    if (!$products_ep || !$products_ep['enabled']) {
+        wp_send_json_error('Products endpoint not enabled');
+    }
+
+    $products_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
+    $products = amrod_get_endpoint($token, $products_url);
+    
+    if ($products === false || !is_array($products)) {
+        wp_send_json_error('Failed to fetch products');
+    }
+
+    foreach ($products as $product) {
+        if (($product['ProductCode'] ?? '') === $product_code) {
+            $result = amrod_sync_single_product($product);
+            if ($result) {
+                wp_send_json_success(['message' => 'Product synced successfully']);
+            } else {
+                wp_send_json_error('Failed to sync product');
+            }
+        }
+    }
+    
+    wp_send_json_error('Product not found');
+}
+
+// ===== HELPER FUNCTIONS =====
+
+function amrod_get_endpoints() {
+    $defaults = amrod_get_default_endpoints();
+    $stored = get_option('amrod_endpoints');
+    if ($stored && is_string($stored)) {
+        $stored = @json_decode($stored, true);
+        if (is_array($stored)) {
+            foreach ($defaults as $key => $default) {
+                if (isset($stored[$key])) {
+                    $stored[$key] = array_merge($default, $stored[$key]);
+                } else {
+                    $stored[$key] = $default;
+                }
+            }
+            return $stored;
+        }
+    }
+    return $defaults;
+}
+
+function amrod_save_endpoints($endpoints) {
+    update_option('amrod_endpoints', json_encode($endpoints));
+}
+
+// ===== VENDOR TIER FUNCTIONS =====
+function amrod_get_vendor_tier($vendor_id = 'amrod') {
+    $vendors = get_option('woosync_vendors', []);
+    if (!is_array($vendors)) {
+        $vendors = [];
+    }
+    return $vendors[$vendor_id] ?? [
+        'tier' => 'Standard',
+        'tier_level' => 0,
+        'tier_pricing_endpoint' => '/api/v1/Prices/',
+        'tier_active_since' => '',
+        'tier_expiry' => '',
+        'tier_notes' => '',
+        'last_tier_check' => '',
+        'upgrade_url' => '',
+    ];
+}
+
+function amrod_save_vendor_tier($vendor_id, $tier_data) {
+    $vendors = get_option('woosync_vendors', []);
+    if (!is_array($vendors)) {
+        $vendors = [];
+    }
+    $vendors[$vendor_id] = array_merge(amrod_get_vendor_tier($vendor_id), $tier_data);
+    $vendors[$vendor_id]['last_tier_check'] = current_time('mysql');
+    update_option('woosync_vendors', $vendors);
+}
+
+function amrod_get_tier_level($tier_name) {
+    $tiers = [
+        'Standard' => 0,
+        'Bronze' => 1,
+        'Silver' => 2,
+        'Gold' => 3,
+        'Platinum' => 4,
+    ];
+    return $tiers[$tier_name] ?? 0;
+}
+
+function amrod_get_tier_color_class($tier_name) {
+    $colors = [
+        'Standard' => 'tier-standard',
+        'Bronze' => 'tier-bronze',
+        'Silver' => 'tier-silver',
+        'Gold' => 'tier-gold',
+        'Platinum' => 'tier-platinum',
+    ];
+    return $colors[$tier_name] ?? 'tier-standard';
+}
+
+function amrod_get_tier_icon($tier_name) {
+    $icons = [
+        'Standard' => '📋',
+        'Bronze' => '🥉',
+        'Silver' => '🥈',
+        'Gold' => '🏆',
+        'Platinum' => '💎',
+    ];
+    return $icons[$tier_name] ?? '📋';
+}
+
+function amrod_generate_preview_with_tier($product, $mapping, $vendor_tier) {
+    $preview = amrod_generate_preview($product, $mapping);
+    
+    $tier = $vendor_tier['tier'] ?? 'Standard';
+    $markup_percent = get_option('woosync_markup_percent', 30);
+    
+    $preview['tier'] = $tier;
+    $preview['tier_price'] = $preview['price'];
+    $preview['markup_percent'] = $markup_percent;
+    $preview['markup_amount'] = 0;
+    $preview['customer_price'] = $preview['price'];
+    $preview['your_margin'] = 0;
+    $preview['has_tier_pricing'] = ($tier !== 'Standard');
+    
+    if ($tier === 'Standard') {
+        $preview['tier_price'] = $preview['price'];
+        $preview['markup_amount'] = $preview['price'] * ($markup_percent / 100);
+        $preview['customer_price'] = $preview['price'] + $preview['markup_amount'];
+        $preview['your_margin'] = $preview['markup_amount'];
+        return $preview;
+    }
+    
+    $token = amrod_get_token();
+    if ($token) {
+        $api_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za');
+        $prices_endpoint = $vendor_tier['tier_pricing_endpoint'] ?? '/api/v1/Prices/';
+        $prices_url = $api_url . $prices_endpoint;
+        
+        $prices = amrod_get_endpoint($token, $prices_url);
+        if ($prices && is_array($prices)) {
+            $code = $product[$mapping['sku'] ?? 'ProductCode'] ?? '';
+            foreach ($prices as $price_item) {
+                $item_code = $price_item['ProductCode'] ?? $price_item['ItemCode'] ?? '';
+                if ($item_code === $code) {
+                    $tier_price = floatval($price_item['Price'] ?? $price_item['TierPrice'] ?? 0);
+                    if ($tier_price > 0) {
+                        $preview['tier_price'] = $tier_price;
+                        $preview['markup_amount'] = $tier_price * ($markup_percent / 100);
+                        $preview['customer_price'] = $tier_price + $preview['markup_amount'];
+                        $preview['your_margin'] = $preview['markup_amount'];
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    
+    return $preview;
+}
+
+function amrod_get_password() {
+    $stored = get_option('amrod_password');
+    if ($stored) return $stored;
+    $env = getenv('AMROD_API_PASSWORD');
+    if ($env !== false && $env !== '') return $env;
+    if (defined('AMROD_API_PASSWORD') && AMROD_API_PASSWORD) return AMROD_API_PASSWORD;
+    return '';
+}
+
+function amrod_mask_token_for_display($token) {
+    if (!$token) return '';
+    return substr($token, 0, 6) . '...' . substr($token, -6);
+}
+
+function amrod_get_token() {
+    $cached = get_transient('amrod_token');
     if ($cached) return $cached;
 
-    $auth_url = $vendor['auth_url'] . '/VendorLogin';
+    $auth_url = get_option('amrod_auth_url', 'https://identity.amrod.co.za') . '/VendorLogin';
     $payload = json_encode([
-        'username' => $vendor['username'] ?? '',
-        'password' => $vendor['password'] ?? '',
-        'CustomerCode' => $vendor['customer_code'] ?? ''
+        'username' => get_option('amrod_username'),
+        'password' => amrod_get_password(),
+        'CustomerCode' => get_option('amrod_customer_code')
     ]);
 
     $response = wp_remote_post($auth_url, [
@@ -2494,7 +2422,7 @@ function woosync_get_token($vendor) {
     ]);
 
     if (is_wp_error($response)) {
-        woosync_sync_log('❌ Failed to obtain token: ' . $response->get_error_message());
+        amrod_sync_log('Failed to obtain token: ' . $response->get_error_message());
         return false;
     }
 
@@ -2502,353 +2430,168 @@ function woosync_get_token($vendor) {
     $body = wp_remote_retrieve_body($response);
 
     if ($code !== 200) {
-        woosync_sync_log("❌ Token endpoint returned HTTP {$code}");
+        amrod_sync_log("Token endpoint returned HTTP {$code}");
         return false;
     }
 
     $data = json_decode($body, true);
     if (json_last_error() !== JSON_ERROR_NONE) {
-        woosync_sync_log('❌ Invalid token response: ' . json_last_error_msg());
+        amrod_sync_log('Invalid token response: ' . json_last_error_msg());
         return false;
     }
 
     $token = $data['token'] ?? false;
     if ($token) {
-        set_transient('woosync_token_' . $vendor['id'], $token, 55 * MINUTE_IN_SECONDS);
-        woosync_sync_log('✅ Token obtained successfully');
+        set_transient('amrod_token', $token, 55 * MINUTE_IN_SECONDS);
+        update_option('amrod_last_token', amrod_mask_token_for_display($token));
+        amrod_sync_log('✅ Token obtained successfully');
     }
 
     return $token;
 }
 
-function woosync_get_api_data($vendor, $endpoint_path, $token = null) {
-    if (!$token) {
-        $token = woosync_get_token($vendor);
-        if (!$token) return false;
-    }
+function amrod_get_endpoint($token, $endpoint_url, $retries = 2) {
+    for ($attempt = 0; $attempt <= $retries; $attempt++) {
+        $response = wp_remote_get($endpoint_url, [
+            'headers' => ["Authorization" => "Bearer $token"],
+            'timeout' => 20,
+        ]);
 
-    $url = $vendor['api_url'] . $endpoint_path;
-    
-    $response = wp_remote_get($url, [
-        'headers' => ["Authorization" => "Bearer $token"],
-        'timeout' => 30,
-    ]);
-
-    if (is_wp_error($response)) {
-        woosync_sync_log('❌ API error: ' . $response->get_error_message());
-        return false;
-    }
-
-    $code = wp_remote_retrieve_response_code($response);
-    if ($code !== 200) {
-        woosync_sync_log("❌ API returned HTTP {$code}");
-        return false;
-    }
-
-    $body = wp_remote_retrieve_body($response);
-    $data = json_decode($body, true);
-    
-    if (json_last_error() !== JSON_ERROR_NONE) {
-        woosync_sync_log('❌ Invalid JSON response: ' . json_last_error_msg());
-        return false;
-    }
-
-    return $data;
-}
-
-// ===== APPLY FIELD MAPPING =====
-function woosync_apply_field_mapping($wc_product, $vendor_data, $mapping) {
-    if (empty($vendor_data) || !is_array($vendor_data)) return $wc_product;
-    if (!is_a($wc_product, 'WC_Product')) return $wc_product;
-
-    // Get sample to determine value types
-    foreach ($mapping as $wc_key => $api_field) {
-        if (empty($api_field)) continue;
-
-        $value = woosync_get_nested_value($vendor_data, $api_field);
-        if ($value === null) continue;
-
-        switch ($wc_key) {
-            case 'sku':
-                $wc_product->set_sku(sanitize_text_field($value));
-                break;
-
-            case 'name':
-                $wc_product->set_name(sanitize_text_field($value));
-                break;
-
-            case 'price':
-                $wc_product->set_regular_price(floatval($value));
-                break;
-
-            case 'sale_price':
-                if (!empty($value)) {
-                    $wc_product->set_sale_price(floatval($value));
-                }
-                break;
-
-            case 'description':
-                $wc_product->set_description($value);
-                break;
-
-            case 'short_description':
-                $wc_product->set_short_description($value);
-                break;
-
-            case 'stock':
-                $wc_product->set_stock_quantity(intval($value));
-                $wc_product->set_manage_stock(true);
-                break;
-
-            case 'stock_status':
-                $wc_product->set_stock_status($value === '0' ? 'outofstock' : 'instock');
-                break;
-
-            case 'weight':
-                $wc_product->set_weight(sanitize_text_field($value));
-                break;
-
-            case 'dimensions':
-                // Parse dimensions (expecting format like "10x20x30" or separate fields)
-                $parts = explode('x', $value);
-                if (count($parts) >= 3) {
-                    $wc_product->set_dimensions([
-                        'length' => floatval($parts[0]),
-                        'width' => floatval($parts[1]),
-                        'height' => floatval($parts[2])
-                    ]);
-                }
-                break;
-
-            case 'images':
-                if (is_array($value) && !empty($value)) {
-                    $image_ids = [];
-                    foreach ($value as $image_url) {
-                        if (filter_var($image_url, FILTER_VALIDATE_URL)) {
-                            $image_id = woosync_download_image($image_url, $wc_product->get_id());
-                            if ($image_id) {
-                                $image_ids[] = $image_id;
-                            }
-                        }
-                    }
-                    if (!empty($image_ids)) {
-                        $wc_product->set_image_id($image_ids[0]);
-                        if (count($image_ids) > 1) {
-                            $wc_product->set_gallery_image_ids(array_slice($image_ids, 1));
-                        }
-                    }
-                }
-                break;
-
-            case 'categories':
-                if (!empty($value)) {
-                    $category_ids = woosync_get_or_create_categories($value);
-                    if (!empty($category_ids)) {
-                        $wc_product->set_category_ids($category_ids);
-                    }
-                }
-                break;
-
-            case 'brand':
-                // Set brand as product attribute or tag
-                woosync_set_product_attribute($wc_product, 'brand', $value);
-                break;
-
-            case 'colour':
-                woosync_set_product_attribute($wc_product, 'colour', $value);
-                break;
-
-            case 'size':
-                woosync_set_product_attribute($wc_product, 'size', $value);
-                break;
-
-            case 'min_quantity':
-                $wc_product->add_meta_data('_min_quantity', intval($value), true);
-                break;
-
-            case 'tags':
-                if (!empty($value)) {
-                    $tags = is_array($value) ? $value : explode(',', $value);
-                    $tag_ids = [];
-                    foreach ($tags as $tag) {
-                        $tag = trim(sanitize_text_field($tag));
-                        if ($tag) {
-                            $term = get_term_by('name', $tag, 'product_tag');
-                            if (!$term) {
-                                $term = wp_insert_term($tag, 'product_tag');
-                                $tag_ids[] = is_array($term) ? $term['term_id'] : 0;
-                            } else {
-                                $tag_ids[] = $term->term_id;
-                            }
-                        }
-                    }
-                    if (!empty($tag_ids)) {
-                        $wc_product->set_tag_ids($tag_ids);
-                    }
-                }
-                break;
-
-            case 'status':
-                $wc_product->set_status($value);
-                break;
-
-            case 'featured':
-                $wc_product->set_featured($value === '1' || $value === 'true');
-                break;
-
-            case 'meta':
-                // Custom meta field - stored as _custom_[key]
-                $wc_product->add_meta_data('_custom_' . $api_field, $value, true);
-                break;
-        }
-    }
-
-    return $wc_product;
-}
-
-function woosync_get_nested_value($array, $key) {
-    // Support dot notation for nested keys
-    $keys = explode('.', $key);
-    $value = $array;
-    
-    foreach ($keys as $k) {
-        if (is_array($value) && isset($value[$k])) {
-            $value = $value[$k];
-        } else {
-            return null;
-        }
-    }
-    
-    return $value;
-}
-
-function woosync_set_product_attribute($product, $name, $value) {
-    if (empty($value)) return;
-    
-    $attributes = $product->get_attributes();
-    
-    if (isset($attributes[$name])) {
-        $attr = $attributes[$name];
-        $attr->add_options([sanitize_title($value)]);
-    } else {
-        $attr = new WC_Product_Attribute();
-        $attr->set_id(0);
-        $attr->set_name($name);
-        $attr->set_options([sanitize_title($value)]);
-        $attr->set_visible(true);
-        $attr->set_variation(false);
-        
-        $attributes[$name] = $attr;
-        $product->set_attributes($attributes);
-    }
-}
-
-function woosync_download_image($image_url, $product_id) {
-    // Check if image already exists
-    $attachment = get_posts([
-        'post_type' => 'attachment',
-        'meta_query' => [['key' => '_woo_sync_image_url', 'value' => $image_url]],
-        'posts_per_page' => 1
-    ]);
-    
-    if (!empty($attachment)) {
-        return $attachment[0]->ID;
-    }
-    
-    // Download new image
-    $response = wp_remote_get($image_url, ['timeout' => 30]);
-    if (is_wp_error($response)) return false;
-    
-    $image_data = wp_remote_retrieve_body($response);
-    $filename = basename($image_url);
-    
-    $upload = wp_upload_bits($filename, null, $image_data);
-    if ($upload['error']) return false;
-    
-    $attachment = [
-        'post_title' => $filename,
-        'post_content' => '',
-        'post_status' => 'inherit',
-        'post_mime_type' => $upload['type']
-    ];
-    
-    $attach_id = wp_insert_attachment($attachment, $upload['file'], $product_id);
-    if (!$attach_id || is_wp_error($attach_id)) return false;
-    
-    update_post_meta($attach_id, '_woo_sync_image_url', $image_url);
-    
-    require_once(ABSPATH . 'wp-admin/includes/image.php');
-    $metadata = wp_generate_attachment_metadata($attach_id, $upload['file']);
-    wp_update_attachment_metadata($attach_id, $metadata);
-    
-    return $attach_id;
-}
-
-function woosync_get_or_create_categories($category_names) {
-    $category_ids = [];
-    $names = is_array($category_names) ? $category_names : [$category_names];
-    
-    foreach ($names as $name) {
-        $name = trim(sanitize_text_field($name));
-        if (empty($name)) continue;
-        
-        $term = get_term_by('name', $name, 'product_cat');
-        if (!$term) {
-            $term = wp_insert_term($name, 'product_cat');
-            if (is_array($term)) {
-                $category_ids[] = $term['term_id'];
+        if (is_wp_error($response)) {
+            if ($attempt === $retries) {
+                amrod_sync_log('Endpoint error: ' . $response->get_error_message());
+                return false;
             }
         } else {
-            $category_ids[] = $term->term_id;
+            $code = wp_remote_retrieve_response_code($response);
+            $body = wp_remote_retrieve_body($response);
+            
+            if ($code === 200) {
+                $decoded = json_decode($body, true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    return $decoded;
+                }
+                if ($attempt === $retries) {
+                    amrod_sync_log('Invalid JSON: ' . json_last_error_msg());
+                    return false;
+                }
+            } else {
+                if ($attempt === $retries) {
+                    amrod_sync_log("Endpoint returned HTTP {$code}");
+                    return false;
+                }
+            }
+        }
+
+        if ($attempt < $retries) {
+            sleep(pow(2, $attempt));
         }
     }
-    
-    return $category_ids;
+
+    return false;
 }
 
-// ===== SYNC PROCESSING =====
-function woosync_process_sync($vendor, $sync_mode = 'full', $batch_size = 200, $offset = 0) {
-    $token = woosync_get_token($vendor);
+function amrod_sync_log($message) {
+    $log = (array) get_option('amrod_sync_log', []);
+    $log[] = '[' . current_time('mysql') . '] ' . $message;
+    $log = array_slice($log, -500);
+    update_option('amrod_sync_log', $log);
+}
+
+// Generate product preview array
+function amrod_generate_preview($product, $mapping) {
+    $preview = [
+        'sku' => $product[$mapping['sku'] ?? 'ProductCode'] ?? '',
+        'name' => $product[$mapping['name'] ?? 'Description'] ?? '',
+        'price' => $product[$mapping['price'] ?? 'Price'] ?? 0,
+        'description' => $product[$mapping['description'] ?? 'LongDescription'] ?? '',
+        'category' => $product[$mapping['categories'] ?? 'CategoryName'] ?? '',
+        'brand' => $product[$mapping['brand'] ?? 'Brand'] ?? '',
+        'colour' => $product[$mapping['colour'] ?? 'Colour'] ?? '',
+        'image' => $product[$mapping['image'] ?? 'ImageURL'] ?? '',
+        'stock' => $product[$mapping['stock'] ?? 'Stock'] ?? 'N/A',
+    ];
+    
+    return $preview;
+}
+
+// Sync single product to WooCommerce
+function amrod_sync_single_product($product) {
+    if (empty($product['ProductCode'])) return false;
+
+    $sku = sanitize_text_field($product['ProductCode']);
+    $existing_id = wc_get_product_id_by_sku($sku);
+
+    try {
+        if ($existing_id) {
+            $wc_product = wc_get_product($existing_id);
+        } else {
+            $wc_product = new WC_Product_Simple();
+            $wc_product->set_status('publish');
+            $wc_product->set_catalog_visibility('visible');
+        }
+
+        if (!$wc_product || !is_a($wc_product, 'WC_Product')) return false;
+
+        $mapping = get_option('amrod_field_mapping', []);
+        
+        $wc_product->set_sku($sku);
+        $wc_product->set_name(sanitize_text_field($product['Description'] ?? 'Product'));
+        
+        $price_field = $mapping['price'] ?? 'Price';
+        $wc_product->set_regular_price(floatval($product[$price_field] ?? 0));
+        
+        $desc_field = $mapping['description'] ?? 'LongDescription';
+        $wc_product->set_description($product[$desc_field] ?? '');
+        
+        $category_ids = amrod_get_category_ids($product, $mapping);
+        if (!empty($category_ids)) {
+            $wc_product->set_category_ids($category_ids);
+        }
+        
+        $product_id = $wc_product->save();
+        
+        if ($product_id && $product_id > 0) {
+            amrod_sync_log("✅ Synced product: {$product['Description']} ({$sku})");
+            return true;
+        }
+    } catch (Exception $e) {
+        amrod_sync_log('❌ Error syncing product ' . $sku . ': ' . $e->getMessage());
+    }
+    
+    return false;
+}
+
+// ===== SYNC BATCH FUNCTION (from previous version) =====
+function amrod_sync_process_batch($offset = 0, $batch_size = 200) {
+    $token = amrod_get_token();
     if (!$token) {
-        return ['success' => false, 'message' => 'Failed to obtain authentication token'];
+        return ['success' => false, 'processed_total' => 0, 'total' => 0, 'more' => false, 'error' => 'Failed to obtain token'];
     }
 
-    $endpoints = woosync_get_vendor_endpoints($vendor);
-    $mapping = woosync_get_vendor_field_mapping($vendor);
+    $endpoints = amrod_get_endpoints();
+    $products_ep = $endpoints['products'] ?? null;
     
-    // Determine endpoint based on sync mode
-    $endpoint_key = $sync_mode === 'incremental' ? 'products_updated' : 'products';
-    $endpoint = $endpoints[$endpoint_key] ?? null;
-    
-    if (!$endpoint || !$endpoint['enabled']) {
-        return ['success' => false, 'message' => "Endpoint for {$sync_mode} sync not enabled"];
+    if (!$products_ep || !$products_ep['enabled']) {
+        return ['success' => false, 'processed_total' => 0, 'total' => 0, 'more' => false, 'error' => 'Products endpoint not enabled'];
     }
 
-    woosync_sync_log("⏳ Starting {$sync_mode} sync at offset {$offset}");
+    $products_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
+    $products = amrod_get_endpoint($token, $products_url);
     
-    $products = woosync_get_api_data($vendor, $endpoint['path'], $token);
-    if (!$products || !is_array($products)) {
-        return ['success' => false, 'message' => 'Failed to fetch products from API'];
+    if ($products === false || !is_array($products)) {
+        return ['success' => false, 'processed_total' => 0, 'total' => 0, 'more' => false, 'error' => 'Failed to fetch products'];
     }
 
     $total = count($products);
     $batch = array_slice($products, $offset, $batch_size);
     $processed = 0;
-    $errors = 0;
+    $mapping = get_option('amrod_field_mapping', []);
 
     foreach ($batch as $p) {
-        if (empty($p['ProductCode']) && empty($p['productCode']) && empty($p['SKU']) && empty($p['sku'])) {
-            $errors++;
-            continue;
-        }
+        if (empty($p['ProductCode'])) continue;
 
-        // Determine SKU field based on available data
-        $sku = sanitize_text_field($p['ProductCode'] ?? $p['productCode'] ?? $p['SKU'] ?? $p['sku'] ?? '');
-        if (empty($sku)) {
-            $errors++;
-            continue;
-        }
-
+        $sku = sanitize_text_field($p['ProductCode']);
         $existing_id = wc_get_product_id_by_sku($sku);
 
         try {
@@ -2860,1349 +2603,128 @@ function woosync_process_sync($vendor, $sync_mode = 'full', $batch_size = 200, $
                 $wc_product->set_catalog_visibility('visible');
             }
 
-            if (!$wc_product || !is_a($wc_product, 'WC_Product')) {
-                $errors++;
-                continue;
+            if (!$wc_product || !is_a($wc_product, 'WC_Product')) continue;
+
+            $wc_product->set_sku($sku);
+            $wc_product->set_name(sanitize_text_field($p['Description'] ?? 'Product'));
+            
+            $price_field = $mapping['price'] ?? 'Price';
+            $wc_product->set_regular_price(floatval($p[$price_field] ?? 0));
+            
+            $desc_field = $mapping['description'] ?? 'LongDescription';
+            $wc_product->set_description($p[$desc_field] ?? '');
+            
+            $category_ids = amrod_get_category_ids($p, $mapping);
+            if (!empty($category_ids)) {
+                $wc_product->set_category_ids($category_ids);
             }
 
-            // Apply field mapping
-            $wc_product = woosync_apply_field_mapping($wc_product, $p, $mapping);
             $product_id = $wc_product->save();
-
             if ($product_id && $product_id > 0) {
                 $processed++;
-            } else {
-                $errors++;
             }
         } catch (Exception $e) {
-            $errors++;
-            woosync_sync_log("❌ Error processing SKU {$sku}: " . $e->getMessage());
+            amrod_sync_log('❌ Error syncing product ' . $sku . ': ' . $e->getMessage());
+            continue;
         }
     }
 
-    // Update vendor stats
-    $vendor['total_products'] = ($vendor['total_products'] ?? 0) + $processed;
-    $vendor['last_sync'] = current_time('mysql');
-    woosync_save_vendor($vendor);
-    
-    // Update global stats
-    update_option('woosync_total_products', (int)get_option('woosync_total_products', 0) + $processed);
-    update_option('woosync_last_sync', current_time('mysql'));
+    $prev_total = (int) get_option('amrod_total_products', 0);
+    update_option('amrod_total_products', $prev_total + $processed);
+    update_option('amrod_last_sync', current_time('mysql'));
 
     $next_offset = $offset + $batch_size;
     $more = $next_offset < $total;
-
-    woosync_sync_log("✅ Synced {$processed} products (Total: {$total}, More: " . ($more ? 'Yes' : 'No') . ")");
-
+    
+    amrod_sync_log("✅ Batch complete: {$processed} products synced");
+    
     return [
         'success' => true,
         'processed' => $processed,
-        'errors' => $errors,
+        'processed_total' => $prev_total + $processed,
         'total' => $total,
         'more' => $more,
         'next_offset' => $next_offset
     ];
 }
 
-// ===== AJAX HANDLERS =====
-add_action('wp_ajax_woosync_fetch_token', 'woosync_ajax_fetch_token');
-function woosync_ajax_fetch_token() {
-    check_ajax_referer('woosync_nonce');
-    if (!current_user_can('manage_options')) wp_die('Unauthorized');
-    
-    $vendor = woosync_get_active_vendor();
-    if (!$vendor) {
-        wp_send_json_error('No active vendor');
+// ===== HELPER FUNCTIONS FOR SYNC =====
+
+function amrod_get_or_create_category($category_name) {
+    $category_name = sanitize_text_field(trim($category_name));
+    if (empty($category_name)) return 0;
+
+    $term = get_term_by('name', $category_name, 'product_cat');
+    if ($term) {
+        return (int) $term->term_id;
     }
-    
-    $token = woosync_get_token($vendor);
-    if ($token) {
-        wp_send_json_success(['token' => substr($token, 0, 6) . '...' . substr($token, -6)]);
+
+    $result = wp_insert_term($category_name, 'product_cat', [
+        'description' => 'Created by WooSync',
+        'parent' => 0,
+    ]);
+
+    if (is_wp_error($result)) {
+        if ($result->get_error_code() === 'term_exists') {
+            return (int) $result->get_error_data();
+        }
+        amrod_sync_log('❌ Failed to create category: ' . $result->get_error_message());
+        return 0;
+    }
+
+    return (int) $result['term_id'];
+}
+
+function amrod_get_category_ids($product, $mapping) {
+    $category_ids = [];
+    $category_field = $mapping['categories'] ?? 'CategoryName';
+
+    if (!isset($product[$category_field]) || empty($product[$category_field])) {
+        return $category_ids;
+    }
+
+    $category_value = $product[$category_field];
+
+    if (is_array($category_value)) {
+        foreach ($category_value as $cat) {
+            $cat_id = amrod_get_or_create_category($cat);
+            if ($cat_id > 0) {
+                $category_ids[] = $cat_id;
+            }
+        }
+    } elseif (is_string($category_value) && strpos($category_value, ',') !== false) {
+        $categories = array_map('trim', explode(',', $category_value));
+        foreach ($categories as $cat) {
+            $cat_id = amrod_get_or_create_category($cat);
+            if ($cat_id > 0) {
+                $category_ids[] = $cat_id;
+            }
+        }
+    } elseif (is_string($category_value) && strpos($category_value, '|') !== false) {
+        $categories = array_map('trim', explode('|', $category_value));
+        foreach ($categories as $cat) {
+            $cat_id = amrod_get_or_create_category($cat);
+            if ($cat_id > 0) {
+                $category_ids[] = $cat_id;
+            }
+        }
+    } elseif (is_string($category_value) && strpos($category_value, '/') !== false) {
+        $categories = array_map('trim', explode('/', $category_value));
+        foreach ($categories as $cat) {
+            $cat_id = amrod_get_or_create_category($cat);
+            if ($cat_id > 0) {
+                $category_ids[] = $cat_id;
+            }
+        }
     } else {
-        wp_send_json_error('Failed to fetch token');
-    }
-}
-
-add_action('wp_ajax_woosync_sync_batch', 'woosync_ajax_sync_batch');
-function woosync_ajax_sync_batch() {
-    check_ajax_referer('woosync_nonce');
-    if (!current_user_can('manage_options')) wp_die('Unauthorized');
-    
-    $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? '');
-    $vendor = $vendor_id ? woosync_get_vendor_by_id($vendor_id) : woosync_get_active_vendor();
-    
-    if (!$vendor) {
-        wp_send_json_error('Vendor not found');
-    }
-    
-    $sync_mode = sanitize_text_field($_POST['sync_mode'] ?? 'full');
-    $batch_size = intval($_POST['batch_size'] ?? 200);
-    $offset = intval($_POST['offset'] ?? 0);
-    
-    $result = woosync_process_sync($vendor, $sync_mode, $batch_size, $offset);
-    wp_send_json_success($result);
-}
-
-add_action('wp_ajax_woosync_auto_detect_fields', 'woosync_ajax_auto_detect_fields');
-function woosync_ajax_auto_detect_fields() {
-    check_ajax_referer('woosync_nonce');
-    if (!current_user_can('manage_options')) wp_die('Unauthorized');
-    
-    $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? '');
-    $vendor = $vendor_id ? woosync_get_vendor_by_id($vendor_id) : woosync_get_active_vendor();
-    
-    if (!$vendor) {
-        wp_send_json_error('Vendor not found');
-    }
-    
-    $token = woosync_get_token($vendor);
-    if (!$token) {
-        wp_send_json_error('Failed to authenticate');
-    }
-    
-    $endpoints = woosync_get_vendor_endpoints($vendor);
-    $products_ep = $endpoints['products'] ?? null;
-    
-    if (!$products_ep || !$products_ep['enabled']) {
-        wp_send_json_error('Products endpoint not enabled');
-    }
-    
-    $products = woosync_get_api_data($vendor, $products_ep['path'], $token);
-    if (!$products || !is_array($products) || empty($products)) {
-        wp_send_json_error('No products returned from API');
-    }
-    
-    // Get first product as sample
-    $sample = is_array($products[0]) ? $products[0] : $products;
-    $api_fields = woosync_detect_api_fields($sample);
-    $wc_fields = woosync_get_wc_fields();
-    $mappings = woosync_fuzzy_match_fields($api_fields, $wc_fields);
-    
-    wp_send_json_success([
-        'api_fields' => $api_fields,
-        'mappings' => $mappings,
-        'sample' => $sample
-    ]);
-}
-
-add_action('wp_ajax_woosync_test_mapping', 'woosync_ajax_test_mapping');
-function woosync_ajax_test_mapping() {
-    check_ajax_referer('woosync_nonce');
-    if (!current_user_can('manage_options')) wp_die('Unauthorized');
-    
-    $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? '');
-    $vendor = $vendor_id ? woosync_get_vendor_by_id($vendor_id) : woosync_get_active_vendor();
-    
-    if (!$vendor) {
-        wp_send_json_error('Vendor not found');
-    }
-    
-    $token = woosync_get_token($vendor);
-    if (!$token) {
-        wp_send_json_error('Failed to authenticate');
-    }
-    
-    $endpoints = woosync_get_vendor_endpoints($vendor);
-    $products_ep = $endpoints['products'] ?? null;
-    
-    if (!$products_ep || !$products_ep['enabled']) {
-        wp_send_json_error('Products endpoint not enabled');
-    }
-    
-    $products = woosync_get_api_data($vendor, $products_ep['path'], $token);
-    if (!$products || !is_array($products) || empty($products)) {
-        wp_send_json_error('No products returned from API');
-    }
-    
-    $sample = is_array($products[0]) ? $products[0] : $products;
-    $mapping = woosync_get_vendor_field_mapping($vendor);
-    
-    // Create a test product object
-    $test_product = new WC_Product_Simple();
-    $test_product = woosync_apply_field_mapping($test_product, $sample, $mapping);
-    
-    $result = [
-        'sku' => $test_product->get_sku(),
-        'name' => $test_product->get_name(),
-        'price' => $test_product->get_regular_price(),
-        'sale_price' => $test_product->get_sale_price(),
-        'description' => $test_product->get_description(),
-        'stock' => $test_product->get_stock_quantity(),
-        'weight' => $test_product->get_weight(),
-        'dimensions' => $test_product->get_dimensions(),
-        'categories' => $test_product->get_category_ids(),
-        'status' => $test_product->get_status()
-    ];
-    
-    wp_send_json_success($result);
-}
-
-add_action('wp_ajax_woosync_set_active_vendor', 'woosync_ajax_set_active_vendor');
-function woosync_ajax_set_active_vendor() {
-    check_ajax_referer('woosync_nonce');
-    if (!current_user_can('manage_options')) wp_die('Unauthorized');
-    
-    $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? '');
-    $vendor = woosync_get_vendor_by_id($vendor_id);
-    
-    if (!$vendor) {
-        wp_send_json_error('Vendor not found');
-    }
-    
-    update_option('woosync_active_vendor', $vendor_id);
-    wp_send_json_success(['message' => 'Active vendor updated']);
-}
-
-add_action('wp_ajax_woosync_delete_vendor', 'woosync_ajax_delete_vendor');
-function woosync_ajax_delete_vendor() {
-    check_ajax_referer('woosync_nonce');
-    if (!current_user_can('manage_options')) wp_die('Unauthorized');
-    
-    $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? '');
-    woosync_delete_vendor($vendor_id);
-    
-    wp_send_json_success(['message' => 'Vendor deleted']);
-}
-
-
-// ===== NOTIFICATION AJAX HANDLERS =====
-add_action('wp_ajax_woosync_dismiss_notification', 'woosync_ajax_dismiss_notification');
-function woosync_ajax_dismiss_notification() {
-    check_ajax_referer('woosync_notifications');
-    if (!current_user_can('manage_options')) wp_die('Unauthorized');
-    
-    $notification_id = sanitize_text_field($_POST['notification_id'] ?? '');
-    $dismissed = get_user_meta(get_current_user_id(), 'woosync_dismissed', true) ?: [];
-    
-    if (!is_array($dismissed)) $dismissed = [];
-    
-    if (!in_array($notification_id, $dismissed)) {
-        $dismissed[] = $notification_id;
-        update_user_meta(get_current_user_id(), 'woosync_dismissed', $dismissed);
-    }
-    
-    wp_send_json_success();
-}
-
-add_action('wp_ajax_woosync_record_notification_view', 'woosync_ajax_record_notification_view');
-function woosync_ajax_record_notification_view() {
-    check_ajax_referer('woosync_notifications');
-    
-    $notification_id = sanitize_text_field($_POST['notification_id'] ?? '');
-    $notifications = get_option('woosync_notifications', []);
-    
-    if (isset($notifications[$notification_id])) {
-        $notifications[$notification_id]['views'] = intval($notifications[$notification_id]['views'] ?? 0) + 1;
-        update_option('woosync_notifications', $notifications);
-    }
-    
-    wp_send_json_success();
-}
-
-add_action('wp_ajax_woosync_record_notification_click', 'woosync_ajax_record_notification_click');
-function woosync_ajax_record_notification_click() {
-    check_ajax_referer('woosync_notifications');
-    
-    $notification_id = sanitize_text_field($_POST['notification_id'] ?? '');
-    $notifications = get_option('woosync_notifications', []);
-    
-    if (isset($notifications[$notification_id])) {
-        $notifications[$notification_id]['clicks'] = intval($notifications[$notification_id]['clicks'] ?? 0) + 1;
-        update_option('woosync_notifications', $notifications);
-    }
-    
-    wp_send_json_success();
-}
-
-add_action('wp_ajax_woosync_test_connection', 'woosync_ajax_test_connection');
-// ===== PRODUCT OPTIMIZER AJAX HANDLERS =====
-add_action('wp_ajax_woosync_scan_products', 'woosync_ajax_scan_products');
-function woosync_ajax_scan_products() {
-    check_ajax_referer('woosync_nonce');
-    if (!current_user_can('manage_options')) wp_die('Unauthorized');
-    
-    $products = wc_get_products([
-        'limit' => -1,
-        'status' => ['publish', 'private'],
-        'return' => 'objects'
-    ]);
-    
-    $results = [];
-    $needs_attention = 0;
-    $shopping_ready = 0;
-    $total_score = 0;
-    
-    foreach ($products as $product) {
-        $score = woosync_calculate_product_score($product);
-        $checks = woosync_check_product_seo($product);
-        
-        $results[] = [
-            'id' => $product->get_id(),
-            'name' => $product->get_name(),
-            'sku' => $product->get_sku(),
-            'score' => $score,
-            'checks' => $checks,
-            'title_length' => strlen($product->get_name()),
-            'description_length' => strlen(wp_strip_all_tags($product->get_description())),
-            'image_size' => woosync_get_image_size_info($product),
-            'alt_text' => woosync_get_product_image_alt($product),
-            'price' => $product->get_price() ? 'R' . $product->get_price() : 'Not set',
-            'brand' => woosync_get_product_brand($product),
-            'taxonomy' => woosync_get_google_taxonomy($product),
-            'has_schema' => woosync_product_has_schema($product),
-            'category' => woosync_get_product_primary_category($product)
-        ];
-        
-        $total_score += $score;
-        if ($score < 70) $needs_attention++;
-        if ($checks['title'] && $checks['description'] && $checks['image'] && $checks['price']) $shopping_ready++;
-    }
-    
-    $count = count($results);
-    $overall_score = $count > 0 ? round($total_score / $count) : 0;
-    
-    wp_send_json_success([
-        'products' => $results,
-        'total_products' => $count,
-        'overall_score' => $overall_score,
-        'needs_attention' => $needs_attention,
-        'shopping_ready' => $shopping_ready
-    ]);
-}
-
-function woosync_calculate_product_score($product) {
-    $checks = woosync_check_product_seo($product);
-    $score = 0;
-    
-    // Title (15 points)
-    if ($checks['title']) {
-        $title_len = strlen($product->get_name());
-        if ($title_len >= 30 && $title_len <= 150) $score += 15;
-        elseif ($title_len >= 10) $score += 10;
-        else $score += 5;
-    }
-    
-    // Description (15 points)
-    if ($checks['description']) {
-        $desc_len = strlen(wp_strip_all_tags($product->get_description()));
-        if ($desc_len >= 100) $score += 15;
-        elseif ($desc_len >= 50) $score += 10;
-        else $score += 5;
-    }
-    
-    // Image (15 points)
-    if ($checks['image']) $score += 15;
-    
-    // Alt text (10 points)
-    if ($checks['alt_text']) $score += 10;
-    
-    // Price (10 points)
-    if ($checks['price']) $score += 10;
-    
-    // Brand (10 points)
-    if ($checks['brand']) $score += 10;
-    
-    // Taxonomy (10 points)
-    if ($checks['taxonomy']) $score += 10;
-    
-    // Schema (5 points)
-    if ($checks['schema']) $score += 5;
-    
-    return $score;
-}
-
-function woosync_check_product_seo($product) {
-    return [
-        'title' => strlen($product->get_name()) >= 10,
-        'description' => strlen(wp_strip_all_tags($product->get_description())) >= 20,
-        'image' => $product->get_image_id() > 0,
-        'alt_text' => !empty(woosync_get_product_image_alt($product)),
-        'price' => $product->get_price() !== '',
-        'brand' => !empty(woosync_get_product_brand($product)),
-        'taxonomy' => !empty(woosync_get_google_taxonomy($product)),
-        'schema' => woosync_product_has_schema($product)
-    ];
-}
-
-function woosync_get_image_size_info($product) {
-    $image_id = $product->get_image_id();
-    if (!$image_id) return 'No image';
-    
-    $file = get_attached_file($image_id);
-    if ($file && file_exists($file)) {
-        $size = filesize($file);
-        if ($size > 1024 * 1024) return round($size / (1024 * 1024), 1) . ' MB';
-        return round($size / 1024) . ' KB';
-    }
-    return 'Unknown size';
-}
-
-function woosync_get_product_image_alt($product) {
-    $image_id = $product->get_image_id();
-    if (!$image_id) return '';
-    return get_post_meta($image_id, '_wp_attachment_image_alt', true);
-}
-
-function woosync_get_product_brand($product) {
-    $brand = $product->get_attribute('brand');
-    if ($brand) return $brand;
-    
-    $brands = wp_get_post_terms($product->get_id(), 'product_brand');
-    if (!empty($brands)) return $brands[0]->name;
-    
-    return '';
-}
-
-function woosync_get_google_taxonomy($product) {
-    return $product->get_meta('_google_product_category');
-}
-
-function woosync_product_has_schema($product) {
-    return !empty($product->get_meta('_woosync_schema_markup'));
-}
-
-function woosync_get_product_primary_category($product) {
-    $terms = wp_get_post_terms($product->get_id(), 'product_cat');
-    if (!empty($terms)) return $terms[0]->name;
-    return 'Uncategorized';
-}
-
-// Quick fix AJAX handler
-add_action('wp_ajax_woosync_apply_quick_fix', 'woosync_ajax_apply_quick_fix');
-function woosync_ajax_apply_quick_fix() {
-    check_ajax_referer('woosync_nonce');
-    if (!current_user_can('manage_options')) wp_die('Unauthorized');
-    
-    $product_id = intval($_POST['product_id']);
-    $fix_type = sanitize_text_field($_POST['fix_type']);
-    
-    $product = wc_get_product($product_id);
-    if (!$product) {
-        wp_send_json_error('Product not found');
-    }
-    
-    $vendor = woosync_get_active_vendor();
-    
-    switch ($fix_type) {
-        case 'optimize_title':
-            $title = $product->get_name();
-            if (strlen($title) > 150) {
-                $product->set_name(substr($title, 0, 147) . '...');
-                $product->save();
-            }
-            break;
-            
-        case 'generate_description':
-            $description = woosync_generate_product_description($product, $vendor);
-            if ($description) {
-                $product->set_description($description);
-                $product->save();
-            }
-            break;
-            
-        case 'add_alt_text':
-            $alt = woosync_generate_alt_text($product);
-            $image_id = $product->get_image_id();
-            if ($image_id && $alt) {
-                update_post_meta($image_id, '_wp_attachment_image_alt', $alt);
-            }
-            break;
-            
-        case 'set_brand':
-            $brand = woosync_get_vendor_brand_for_product($product, $vendor);
-            if ($brand) {
-                woosync_set_product_attribute($product, 'brand', $brand);
-                $product->save();
-            }
-            break;
-            
-        case 'map_taxonomy':
-            $taxonomy = woosync_suggest_google_taxonomy($product);
-            if ($taxonomy) {
-                $product->update_meta_data('_google_product_category', $taxonomy);
-                $product->save();
-            }
-            break;
-    }
-    
-    $new_score = woosync_calculate_product_score($product);
-    
-    wp_send_json_success([
-        'message' => 'Quick fix applied',
-        'new_score' => $new_score
-    ]);
-}
-
-function woosync_generate_product_description($product, $vendor) {
-    $name = $product->get_name();
-    $sku = $product->get_sku();
-    $price = $product->get_price();
-    
-    $description = '<p><strong>' . esc_html($name) . '</strong>';
-    if ($sku) $description .= ' (SKU: ' . esc_html($sku) . ')';
-    $description .= '</p>';
-    $description .= '<p>Premium quality product available at ';
-    if ($price) $description .= 'R' . number_format(floatval($price), 2);
-    $description .= '. Order now for fast delivery.</p>';
-    $description .= '<p>Features include high-quality materials and excellent craftsmanship.</p>';
-    
-    return $description;
-}
-
-function woosync_generate_alt_text($product) {
-    $name = $product->get_name();
-    $sku = $product->get_sku();
-    return $name . ' - Product Image' . ($sku ? ' | SKU: ' . $sku : '');
-}
-
-function woosync_get_vendor_brand_for_product($product, $vendor) {
-    $source_product_code = $product->get_meta('_source_product_code');
-    if ($source_product_code && $vendor) {
-        // Could fetch from API if needed
-    }
-    
-    return 'Generic Brand';
-}
-
-function woosync_suggest_google_taxonomy($product) {
-    $categories = wp_get_post_terms($product->get_id(), 'product_cat');
-    
-    $taxonomy_map = [
-        'clothing' => 1663,
-        'shirt' => 1663,
-        't-shirt' => 1663,
-        'pants' => 207,
-        'shoes' => 187,
-        'footwear' => 187,
-        'electronics' => 267,
-        'accessories' => 1664,
-        'gift' => 611,
-        'home' => 20624,
-        'kitchen' => 6918,
-        'sports' => 248,
-        'toys' => 4726
-    ];
-    
-    foreach ($categories as $cat) {
-        $cat_name = strtolower($cat->name);
-        foreach ($taxonomy_map as $keyword => $tax_id) {
-            if (strpos($cat_name, $keyword) !== false) {
-                return $tax_id;
-            }
+        $cat_id = amrod_get_or_create_category($category_value);
+        if ($cat_id > 0) {
+            $category_ids[] = $cat_id;
         }
     }
-    
-    return 1663;
+
+    return array_unique($category_ids);
 }
-
-// Batch action AJAX handler
-add_action('wp_ajax_woosync_batch_action', 'woosync_ajax_batch_action');
-function woosync_ajax_batch_action() {
-    check_ajax_referer('woosync_nonce');
-    if (!current_user_can('manage_options')) wp_die('Unauthorized');
-    
-    $product_ids = isset($_POST['product_ids']) ? array_map('intval', $_POST['product_ids']) : [];
-    $batch_action = sanitize_text_field($_POST['batch_action']);
-    $fix_types = isset($_POST['fix_types']) ? $_POST['fix_types'] : [];
-    
-    if (empty($product_ids)) {
-        $products = wc_get_products([
-            'limit' => -1,
-            'status' => ['publish', 'private']
-        ]);
-        $product_ids = array_map(function($p) { return $p->get_id(); }, $products);
-    }
-    
-    $updated = 0;
-    $vendor = woosync_get_active_vendor();
-    
-    foreach ($product_ids as $product_id) {
-        $product = wc_get_product($product_id);
-        if (!$product) continue;
-        
-        switch ($batch_action) {
-            case 'batch_generate_descriptions':
-                $desc = woosync_generate_product_description($product, $vendor);
-                if ($desc) {
-                    $product->set_description($desc);
-                    $product->save();
-                    $updated++;
-                }
-                break;
-                
-            case 'batch_optimize_titles':
-                $title = $product->get_name();
-                if (strlen($title) > 150) {
-                    $product->set_name(substr($title, 0, 147) . '...');
-                    $product->save();
-                    $updated++;
-                }
-                break;
-                
-            case 'batch_add_alt_text':
-                $alt = woosync_generate_alt_text($product);
-                $image_id = $product->get_image_id();
-                if ($image_id && $alt && !get_post_meta($image_id, '_wp_attachment_image_alt', true)) {
-                    update_post_meta($image_id, '_wp_attachment_image_alt', $alt);
-                    $updated++;
-                }
-                break;
-                
-            case 'batch_set_brands':
-                $brand = woosync_get_vendor_brand_for_product($product, $vendor);
-                if ($brand && !$product->get_attribute('brand')) {
-                    woosync_set_product_attribute($product, 'brand', $brand);
-                    $product->save();
-                    $updated++;
-                }
-                break;
-                
-            case 'batch_map_taxonomy':
-                $taxonomy = woosync_suggest_google_taxonomy($product);
-                if ($taxonomy && !$product->get_meta('_google_product_category')) {
-                    $product->update_meta_data('_google_product_category', $taxonomy);
-                    $product->save();
-                    $updated++;
-                }
-                break;
-                
-            case 'batch_apply_fixes':
-                foreach ($fix_types as $fix_type) {
-                    $_POST['product_id'] = $product_id;
-                    $_POST['fix_type'] = $fix_type;
-                    ob_start();
-                    woosync_ajax_apply_quick_fix();
-                    ob_end_clean();
-                    $updated++;
-                }
-                break;
-        }
-    }
-    
-    wp_send_json_success([
-        'message' => 'Batch action completed',
-        'updated' => $updated
-    ]);
-}
-
-// Schema generator AJAX handler
-add_action('wp_ajax_woosync_generate_schema', 'woosync_ajax_generate_schema');
-function woosync_ajax_generate_schema() {
-    check_ajax_referer('woosync_nonce');
-    if (!current_user_can('manage_options')) wp_die('Unauthorized');
-    
-    $product_id = intval($_POST['product_id']);
-    $product = wc_get_product($product_id);
-    
-    if (!$product) {
-        wp_send_json_error('Product not found');
-    }
-    
-    $schema = woosync_generate_product_schema($product);
-    
-    $product->update_meta_data('_woosync_schema_markup', $schema);
-    $product->save();
-    
-    wp_send_json_success([
-        'product_name' => $product->get_name(),
-        'schema' => $schema
-    ]);
-}
-
-function woosync_generate_product_schema($product) {
-    $price = $product->get_price();
-    $price_val = $price ? floatval($price) : 0;
-    $currency = get_woocommerce_currency();
-    
-    $availability = 'OutOfStock';
-    if ($product->is_in_stock()) {
-        $availability = $product->get_stock_status() === 'onbackorder' ? 'PreOrder' : 'InStock';
-    }
-    
-    $schema = [
-        '@context' => 'https://schema.org',
-        '@type' => 'Product',
-        'name' => $product->get_name(),
-        'sku' => $product->get_sku(),
-        'description' => wp_strip_all_tags($product->get_description()),
-        'image' => [],
-        'offers' => [
-            '@type' => 'Offer',
-            'priceCurrency' => $currency,
-            'price' => number_format($price_val, 2, '.', ''),
-            'availability' => 'https://schema.org/' . $availability,
-            'seller' => [
-                '@type' => 'Organization',
-                'name' => get_bloginfo('name')
-            ]
-        ]
-    ];
-    
-    $image_id = $product->get_image_id();
-    if ($image_id) {
-        $image_url = wp_get_attachment_url($image_id);
-        if ($image_url) {
-            $schema['image'] = $image_url;
-        }
-    }
-    
-    $brand = woosync_get_product_brand($product);
-    if ($brand) {
-        $schema['brand'] = [
-            '@type' => 'Brand',
-            'name' => $brand
-        ];
-    }
-    
-    $gtin = $product->get_meta('_gtin');
-    if ($gtin) {
-        $schema['gtin'] = $gtin;
-    }
-    
-    $mpn = $product->get_meta('_mpn');
-    if ($mpn) {
-        $schema['mpn'] = $mpn;
-    }
-    
-    $rating = $product->get_average_rating();
-    if ($rating > 0) {
-        $review_count = $product->get_review_count();
-        $schema['aggregateRating'] = [
-            '@type' => 'AggregateRating',
-            'ratingValue' => number_format($rating, 1),
-            'reviewCount' => $review_count
-        ];
-    }
-    
-    return $schema;
-}
-
-function woosync_ajax_test_connection() {
-    check_ajax_referer('woosync_nonce');
-    if (!current_user_can('manage_options')) wp_die('Unauthorized');
-    
-    $vendor_id = sanitize_text_field($_POST['vendor_id'] ?? '');
-    $vendor = $vendor_id ? woosync_get_vendor_by_id($vendor_id) : woosync_get_active_vendor();
-    
-    if (!$vendor) {
-        wp_send_json_error('Vendor not found');
-    }
-    
-    $token = woosync_get_token($vendor);
-    if ($token) {
-        wp_send_json_success(['message' => 'Connection successful']);
-    } else {
-        wp_send_json_error('Connection failed');
-    }
-}
-
-// ===== CRON SCHEDULED SYNC =====
-add_action('admin_init', function() {
-    if (isset($_GET['action']) && $_GET['action'] === 'woosync_scheduled_sync') {
-        if (!current_user_can('manage_options')) wp_die('Unauthorized');
-        
-        $vendor = woosync_get_active_vendor();
-        if ($vendor) {
-            woosync_process_sync($vendor, $vendor['sync_mode'] ?? 'full');
-        }
-        
-        wp_safe_redirect(admin_url('admin.php?page=woosync'));
-        exit;
-    }
-});
-
-// ===== UNINSTALL =====
-function woosync_uninstall() {
-    $options = [
-        'woosync_vendors', 'woosync_active_vendor', 'woosync_batch_size', 
-        'woosync_sync_schedule', 'woosync_log_retain_days', 'woosync_wizard_completed',
-        'woosync_sync_log', 'woosync_last_sync', 'woosync_total_products',
-        'woosync_auto_update', 'woosync_update_history', 'woosync_last_update_check',
-        'woosync_last_update_time', 'woosync_update_backup_enabled'
-    ];
-    foreach ($options as $opt) delete_option($opt);
-    
-    // Clear transients
-    delete_transient('woosync_activated');
-    delete_transient('woosync_update_check');
-    delete_transient('woosync_update_available');
-    delete_transient('woosync_update_dismissed');
-    
-    // Clear scheduled update check
-    if (class_exists('WooSync_Updater')) {
-        WooSync_Updater::clear_scheduled_check();
-    }
-}
-register_uninstall_hook(__FILE__, 'woosync_uninstall');
-
-
-// ===== DEACTIVATION =====
-function woosync_deactivate() {
-    if (class_exists('WooSync_Updater')) {
-        WooSync_Updater::clear_scheduled_check();
-    }
-}
-register_deactivation_hook(__FILE__, 'woosync_deactivate');
-
-
-// ===== UPDATES TAB =====
-function woosync_tab_updates() {
-    $updater = new WooSync_Updater();
-    $update_info = $updater->get_update_info();
-    $auto_update = $updater->get_auto_update_setting();
-    $update_history = $updater->get_update_history();
-    $last_check = get_option('woosync_last_update_check', 'Never');
-    $last_update = get_option('woosync_last_update_time', 'Never');
-    $backup_enabled = get_option('woosync_update_backup_enabled', true);
-    
-    // Calculate if update is available
-    $update_available = !empty($update_info);
-    $current_version = WOOSYNC_VERSION;
-    $latest_version = $update_info['version'] ?? $current_version;
-    ?>
-    <div class="card">
-        <div class="card-header">
-            <h5 class="mb-0">🔔 Updates</h5>
-        </div>
-        <div class="card-body">
-            <?php if ($update_available): ?>
-                <div class="alert alert-success d-flex align-items-center gap-2">
-                    <span class="dashicons dashicons-update" style="font-size: 24px;"></span>
-                    <div>
-                        <strong>WooSync v<?php echo esc_html($latest_version); ?> is available!</strong>
-                        <?php if (!empty($update_info['name']) && $update_info['name'] !== $update_info['version']): ?>
-                            <br><?php echo esc_html($update_info['name']); ?>
-                        <?php endif; ?>
-                    </div>
-                </div>
-            <?php else: ?>
-                <div class="alert alert-info d-flex align-items-center gap-2">
-                    <span class="dashicons dashicons-yes-alt" style="font-size: 24px;"></span>
-                    <div>
-                        <strong>You're running the latest version!</strong>
-                        <br>WooSync v<?php echo esc_html($current_version); ?>
-                    </div>
-                </div>
-            <?php endif; ?>
-            
-            <div class="row mt-4">
-                <div class="col-md-6">
-                    <h6>📋 Version Information</h6>
-                    <table class="table table-sm">
-                        <tr>
-                            <td><strong>Current Version:</strong></td>
-                            <td><code><?php echo esc_html($current_version); ?></code></td>
-                        </tr>
-                        <tr>
-                            <td><strong>Latest Version:</strong></td>
-                            <td><code><?php echo esc_html($latest_version); ?></code></td>
-                        </tr>
-                        <tr>
-                            <td><strong>Last Checked:</strong></td>
-                            <td><?php echo esc_html($last_check); ?></td>
-                        </tr>
-                        <tr>
-                            <td><strong>Last Updated:</strong></td>
-                            <td><?php echo esc_html($last_update); ?></td>
-                        </tr>
-                    </table>
-                    
-                    <div class="d-flex gap-2 mt-3">
-                        <button type="button" class="btn btn-primary" id="woosync-check-updates">
-                            🔄 Check for Updates
-                        </button>
-                        <?php if ($update_available): ?>
-                            <a href="<?php echo esc_url($update_info['url'] ?? 'https://github.com/preneshnaidoo/woosync/releases'); ?>" 
-                               target="_blank" class="btn btn-outline-secondary">
-                                📝 View Release Notes
-                            </a>
-                        <?php endif; ?>
-                    </div>
-                </div>
-                
-                <div class="col-md-6">
-                    <h6>⚙️ Automatic Updates</h6>
-                    <form method="post" action="options.php">
-                        <?php settings_fields('woosync_group'); ?>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Auto-Update Preference:</label>
-                            <select name="woosync_auto_update" class="form-select">
-                                <option value="off" <?php selected($auto_update, 'off'); ?>>Off (Manual updates only)</option>
-                                <option value="minor" <?php selected($auto_update, 'minor'); ?>>Minor updates only (security & bug fixes)</option>
-                                <option value="all" <?php selected($auto_update, 'all'); ?>>All updates (including major)</option>
-                            </select>
-                            <small class="text-muted">
-                                Automatic updates install silently in the background, like WordPress core plugins.
-                            </small>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">
-                                <input type="checkbox" name="woosync_update_backup_enabled" value="1" 
-                                       <?php checked($backup_enabled, true); ?>> 
-                                Create backup before updating
-                            </label>
-                            <small class="text-muted d-block">
-                                Backups are stored in wp-content/backups/woosync/
-                            </small>
-                        </div>
-                        
-                        <button type="submit" class="btn btn-success">💾 Save Settings</button>
-                    </form>
-                </div>
-            </div>
-            
-            <?php if ($update_available && !empty($update_info['body'])): ?>
-            <div class="mt-4">
-                <h6>📝 Release Notes</h6>
-                <div class="border rounded p-3" style="max-height: 300px; overflow-y: auto;">
-                    <?php echo wp_kses_post(wpautop($update_info['body'])); ?>
-                </div>
-            </div>
-            <?php endif; ?>
-            
-            <?php if (!empty($update_history)): ?>
-            <div class="mt-4">
-                <h6>📜 Update History</h6>
-                <table class="table table-sm table-hover">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Event</th>
-                            <th>Message</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach (array_reverse($update_history) as $event): ?>
-                        <tr>
-                            <td><small><?php echo esc_html($event['time']); ?></small></td>
-                            <td><span class="badge bg-<?php echo $event['event'] === 'success' ? 'success' : ($event['event'] === 'rollback_success' ? 'warning' : 'secondary'); ?>">
-                                <?php echo esc_html($event['event']); ?>
-                            </span></td>
-                            <td><small><?php echo esc_html($event['message']); ?></small></td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-            <?php endif; ?>
-        </div>
-    </div>
-    
-    <script>
-    jQuery(document).ready(function($) {
-        $("#woosync-check-updates").on("click", function() {
-            var $btn = $(this);
-            $btn.prop("disabled", true).text("Checking...");
-            
-            $.ajax({
-                url: woosyncData.ajaxUrl,
-                type: "POST",
-                data: {
-                    action: "woosync_check_updates",
-                    nonce: woosyncData.nonce
-                },
-                success: function(response) {
-                    if (response.success) {
-                        if (response.data.update_available) {
-                            alert("Update available: v" + response.data.version);
-                            location.reload();
-                        } else {
-                            alert("You're running the latest version!");
-                            $btn.prop("disabled", false).text("🔄 Check for Updates");
-                        }
-                    } else {
-                        alert("Error checking for updates");
-                        $btn.prop("disabled", false).text("🔄 Check for Updates");
-                    }
-                },
-                error: function() {
-                    alert("Error checking for updates");
-                    $btn.prop("disabled", false).text("🔄 Check for Updates");
-                }
-            });
-        });
-    });
-    </script>
-    <?php
-}
-
-
-
-// ===== PRODUCT OPTIMIZER TAB =====
-function woosync_tab_optimizer() {
-    $products = wc_get_products([
-        'limit' => 1,
-        'status' => ['publish', 'private']
-    ]);
-    $total_products = wp_count_posts('product');
-    $total_count = $total_products ? $total_products->publish + $total_products->hold : 0;
-    ?>
-    
-    <div id="productOptimizerTab" class="woosync-optimizer-container">
-        <!-- Header -->
-        <div class="woosync-brand-header">
-            <div>
-                <h1>🚀 Product Optimizer</h1>
-                <p class="text-muted mb-0">Optimize your products for Google Shopping, Facebook/Meta Shop, and general SEO</p>
-            </div>
-            <div class="text-end">
-                <button type="button" class="btn btn-primary" id="runProductScan">
-                    🔍 Run Full Scan
-                </button>
-            </div>
-        </div>
-        
-        <!-- Alerts Container -->
-        <div id="optimizerAlerts"></div>
-        
-        <!-- Quick Stats -->
-        <div class="row mb-4">
-            <div class="col-md-3">
-                <div class="woosync-score-card">
-                    <div class="score-value text-success" id="avgQualityScore">0%</div>
-                    <div class="score-label">Average Quality Score</div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="woosync-score-card">
-                    <div class="score-value" id="productsScanned">0</div>
-                    <div class="score-label">Products Scanned</div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="woosync-score-card">
-                    <div class="score-value text-warning" id="productsNeedingAttention">0</div>
-                    <div class="score-label">Needing Attention</div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="woosync-score-card">
-                    <div class="score-value text-success" id="productsReadyForShopping">0</div>
-                    <div class="score-label">Shopping Ready</div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Score Summary (Hidden by default) -->
-        <div id="scoreSummary" style="display: none;">
-            <div class="card mb-4">
-                <div class="card-header">
-                    <h5 class="mb-0">📊 Quality Score by Category</h5>
-                </div>
-                <div class="card-body">
-                    <div class="row" id="categoryBreakdown"></div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Batch Actions -->
-        <div class="woosync-batch-actions">
-            <h5>⚡ Quick Batch Actions</h5>
-            <p class="text-muted small mb-3">Apply fixes to selected products or all products</p>
-            
-            <div class="row">
-                <div class="col-md-4 mb-3">
-                    <button type="button" class="batch-action-btn w-100" id="batchGenerateDescriptions" data-action="batch_generate_descriptions">
-                        ✨ Generate Descriptions
-                    </button>
-                </div>
-                <div class="col-md-4 mb-3">
-                    <button type="button" class="batch-action-btn w-100" id="batchOptimizeTitles" data-action="batch_optimize_titles">
-                        ✂️ Optimize Titles (150 char max)
-                    </button>
-                </div>
-                <div class="col-md-4 mb-3">
-                    <button type="button" class="batch-action-btn w-100" id="batchAddAltText" data-action="batch_add_alt_text">
-                        🏷️ Add Alt Text to Images
-                    </button>
-                </div>
-                <div class="col-md-4 mb-3">
-                    <button type="button" class="batch-action-btn w-100" id="batchSetBrands" data-action="batch_set_brands">
-                        🏷️ Set Brand Attribute
-                    </button>
-                </div>
-                <div class="col-md-4 mb-3">
-                    <button type="button" class="batch-action-btn w-100" id="batchMapTaxonomy" data-action="batch_map_taxonomy">
-                        📁 Map Google Taxonomy
-                    </button>
-                </div>
-                <div class="col-md-4 mb-3">
-                    <button type="button" class="woosync-export-btn" id="exportQualityReport">
-                        📥 Export CSV Report
-                    </button>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Scan Results Table -->
-        <div class="card" id="scanResultsTable" style="display: none;">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">📋 Scan Results</h5>
-                <div>
-                    <label class="me-2">
-                        <input type="checkbox" id="selectAllProducts"> Select All
-                    </label>
-                </div>
-            </div>
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0">
-                        <thead>
-                            <tr>
-                                <th style="width: 40px;"></th>
-                                <th>Product</th>
-                                <th style="width: 80px;">Score</th>
-                                <th style="width: 300px;">Checks</th>
-                                <th style="width: 100px;">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="scanResultsBody">
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Plugin Recommendations -->
-        <div class="card mt-4">
-            <div class="card-header">
-                <h5 class="mb-0">🔌 Recommended Plugins</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-4 mb-3">
-                        <div class="woosync-plugin-card">
-                            <div class="plugin-icon">📊</div>
-                            <h6>Yoast SEO <span class="woosync-suggested-badge">⭐ Suggested by WooSync</span></h6>
-                            <p>Complete SEO solution with schema markup, meta tags, and content analysis for WooCommerce products.</p>
-                            <a href="https://wordpress.org/plugins/wordpress-seo/" target="_blank" class="plugin-link">
-                                View on WordPress.org →
-                            </a>
-                        </div>
-                    </div>
-                    <div class="col-md-4 mb-3">
-                        <div class="woosync-plugin-card">
-                            <div class="plugin-icon">🛒</div>
-                            <h6>WooCommerce Google Product Feed <span class="woosync-suggested-badge">⭐ Suggested by WooSync</span></h6>
-                            <p>Generate and submit product feeds to Google Merchant Center for Shopping ads.</p>
-                            <a href="https://wordpress.org/plugins/woo-gutenberg-products-feed/" target="_blank" class="plugin-link">
-                                View on WordPress.org →
-                            </a>
-                        </div>
-                    </div>
-                    <div class="col-md-4 mb-3">
-                        <div class="woosync-plugin-card">
-                            <div class="plugin-icon">📘</div>
-                            <h6>Facebook for WooCommerce <span class="woosync-suggested-badge">⭐ Suggested by WooSync</span></h6>
-                            <p>Sync your WooCommerce products with Facebook Catalog for dynamic ads and Shop.</p>
-                            <a href="https://wordpress.org/plugins/facebook-for-woocommerce/" target="_blank" class="plugin-link">
-                                View on WordPress.org →
-                            </a>
-                        </div>
-                    </div>
-                    <div class="col-md-4 mb-3">
-                        <div class="woosync-plugin-card">
-                            <div class="plugin-icon">⭐</div>
-                            <h6>Social Rocket <span class="woosync-suggested-badge">⭐ Suggested by WooSync</span></h6>
-                            <p>Collect and display reviews with social proof to boost conversions and trust.</p>
-                            <a href="https://wordpress.org/plugins/social-rocket/" target="_blank" class="plugin-link">
-                                View on WordPress.org →
-                            </a>
-                        </div>
-                    </div>
-                    <div class="col-md-4 mb-3">
-                        <div class="woosync-plugin-card">
-                            <div class="plugin-icon">📸</div>
-                            <h6>Instagram Shopping <span class="woosync-suggested-badge">⭐ Suggested by WooSync</span></h6>
-                            <p>Tag products in Instagram posts and stories for seamless shopping experience.</p>
-                            <a href="https://help.instagram.com/288026558325244" target="_blank" class="plugin-link">
-                                Instagram Guide →
-                            </a>
-                        </div>
-                    </div>
-                    <div class="col-md-4 mb-3">
-                        <div class="woosync-plugin-card">
-                            <div class="plugin-icon">🔍</div>
-                            <h6>Rank Math SEO <span class="woosync-suggested-badge">⭐ Suggested by WooSync</span></h6>
-                            <p>Modern SEO plugin with AI-powered content optimization and advanced schema.</p>
-                            <a href="https://wordpress.org/plugins/seo-by-rank-math/" target="_blank" class="plugin-link">
-                                View on WordPress.org →
-                            </a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Tutorial Links -->
-        <div class="card mt-4">
-            <div class="card-header">
-                <h5 class="mb-0">📚 Setup Tutorials</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <a href="https://support.google.com/merchants/answer/6364310" target="_blank" class="woosync-tutorial-card text-decoration-none">
-                            <div class="tutorial-icon google">🔵</div>
-                            <div class="tutorial-content">
-                                <div class="tutorial-title">Google Merchant Center Setup Guide</div>
-                                <div class="tutorial-platform">Google • Official Documentation</div>
-                            </div>
-                        </a>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <a href="https://woocommerce.com/documentation/posts/google-product-feed/" target="_blank" class="woosync-tutorial-card text-decoration-none">
-                            <div class="tutorial-icon google">🛒</div>
-                            <div class="tutorial-content">
-                                <div class="tutorial-title">WooCommerce Google Shopping Feed Setup</div>
-                                <div class="tutorial-platform">Google • WooCommerce Guide</div>
-                            </div>
-                        </a>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <a href="https://www.facebook.com/business/news/setting-up-facebook-shop" target="_blank" class="woosync-tutorial-card text-decoration-none">
-                            <div class="tutorial-icon facebook">📘</div>
-                            <div class="tutorial-content">
-                                <div class="tutorial-title">Facebook Shop Setup Guide</div>
-                                <div class="tutorial-platform">Facebook • Meta Commerce</div>
-                            </div>
-                        </a>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <a href="https://help.instagram.com/402025958105621" target="_blank" class="woosync-tutorial-card text-decoration-none">
-                            <div class="tutorial-icon instagram">📸</div>
-                            <div class="tutorial-content">
-                                <div class="tutorial-title">Instagram Shopping Setup</div>
-                                <div class="tutorial-platform">Instagram • Meta Commerce</div>
-                            </div>
-                        </a>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <a href="https://yoast.com/woocommerce-seo/" target="_blank" class="woosync-tutorial-card text-decoration-none">
-                            <div class="tutorial-icon youtube">📹</div>
-                            <div class="tutorial-content">
-                                <div class="tutorial-title">Yoast SEO for WooCommerce Tutorial</div>
-                                <div class="tutorial-platform">Yoast • Official Guide</div>
-                            </div>
-                        </a>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <a href="https://www.youtube.com/results?search_query=woocommerce+google+shopping+feed+setup" target="_blank" class="woosync-tutorial-card text-decoration-none">
-                            <div class="tutorial-icon youtube">▶️</div>
-                            <div class="tutorial-content">
-                                <div class="tutorial-title">Video: WooCommerce Google Feed Setup</div>
-                                <div class="tutorial-platform">YouTube • Video Tutorials</div>
-                            </div>
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- External Resources -->
-        <div class="card mt-4">
-            <div class="card-header">
-                <h5 class="mb-0">🔗 External Resources</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-3 mb-3">
-                        <a href="https://merchants.google.com" target="_blank" class="woosync-resource-link">
-                            <span class="resource-icon">🔵</span>
-                            <span>Google Merchant Center</span>
-                        </a>
-                    </div>
-                    <div class="col-md-3 mb-3">
-                        <a href="https://www.facebook.com/commerce" target="_blank" class="woosync-resource-link">
-                            <span class="resource-icon">📘</span>
-                            <span>Facebook Commerce Manager</span>
-                        </a>
-                    </div>
-                    <div class="col-md-3 mb-3">
-                        <a href="https://www.google.com/basepages/producttype/taxonomy with GTIN" target="_blank" class="woosync-resource-link">
-                            <span class="resource-icon">📁</span>
-                            <span>Google Product Taxonomy ID Lookup</span>
-                        </a>
-                    </div>
-                    <div class="col-md-3 mb-3">
-                        <a href="https://schema.org/Product" target="_blank" class="woosync-resource-link">
-                            <span class="resource-icon">📋</span>
-                            <span>Schema.org Product Documentation</span>
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Product Details Modal -->
-    <div class="modal fade" id="productDetailsModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Product Details</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="d-flex justify-content-between align-items-center mb-4">
-                        <div>
-                            <h4 id="detailProductName">Product Name</h4>
-                            <small class="text-muted" id="detailProductSku">SKU: ---</small>
-                        </div>
-                        <div class="text-end">
-                            <div class="h2 mb-0" id="detailScore">0%</div>
-                            <small class="text-muted">Quality Score</small>
-                        </div>
-                    </div>
-                    
-                    <h6>SEO Checks</h6>
-                    <div id="productCheckDetails"></div>
-                    
-                    <h6 class="mt-4">Quick Fixes</h6>
-                    <div id="productQuickFixes"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Schema Modal -->
-    <div class="modal fade" id="schemaModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">📋 JSON-LD Product Schema</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <p><strong>Product:</strong> <span id="schemaProductName"></span></p>
-                    <p class="text-muted small">This schema has been saved to the product meta. Add this to your theme or use an SEO plugin to output it.</p>
-                    <pre class="woosync-schema-output" id="schemaOutput"></pre>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    <button type="button" class="btn btn-primary" id="copySchemaBtn">📋 Copy to Clipboard</button>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <script>
-    jQuery(document).ready(function($) {
-        // Copy schema button
-        $('#copySchemaBtn').on('click', function() {
-            var schema = $('#schemaOutput').text();
-            navigator.clipboard.writeText(schema).then(function() {
-                alert('Schema copied to clipboard!');
-            });
-        });
-    });
-    </script>
-    <?php
-}
-
-
 
 // ===== PASSWORD VISIBILITY TOGGLE =====
 add_action('admin_footer', function() {
@@ -4219,1150 +2741,1534 @@ add_action('admin_footer', function() {
 });
 
 // ===== PROMO SHARE TAB =====
-function woosync_tab_promo_share() {
-    $active_vendor = woosync_get_active_vendor();
-    $promo_count = woosync_get_promo_count($active_vendor['id'] ?? '');
-    ?>
-    <div class="tab-pane fade show active">
-        <div class="row">
-            <div class="col-md-12">
-                <div class="card mb-4">
-                    <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0">📢 Promo Share - Marketing Hub</h5>
-                        <button type="button" class="btn btn-sm btn-dark" id="refreshPromosBtn">🔄 Refresh</button>
-                    </div>
-                    <div class="card-body">
-                        <div class="alert alert-info mb-3">
-                            <strong>Share promotional products on social media!</strong> 
-                            Click any share button to post directly to Facebook, Twitter, LinkedIn, WhatsApp, or Pinterest.
-                        </div>
-                        
-                        <div class="promo-filters mb-4">
-                            <button type="button" class="btn btn-outline-primary promo-filter-btn active" data-filter="all">All</button>
-                            <button type="button" class="btn btn-outline-danger promo-filter-btn" data-filter="clearance">Clearance</button>
-                            <button type="button" class="btn btn-outline-success promo-filter-btn" data-filter="sale">Sale</button>
-                            <button type="button" class="btn btn-outline-primary promo-filter-btn" data-filter="featured">Featured</button>
-                            <button type="button" class="btn btn-outline-warning promo-filter-btn" data-filter="deal">Deal of the Day</button>
-                        </div>
-                        
-                        <div id="promoGrid" class="row">
-                            <div class="col-12 text-center text-muted py-5">
-                                <div class="spinner-border text-primary" role="status"></div>
-                                <p class="mt-3">Loading promotions...</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <?php
-}
 
-function woosync_get_promo_count($vendor_id) {
-    $cache_key = 'woosync_promos_' . $vendor_id;
-    $promos = get_transient($cache_key);
-    if ($promos === false) {
-        return 0;
-    }
-    return count($promos);
-}
-
-function woosync_get_promos($vendor_id) {
-    $cache_key = 'woosync_promos_' . $vendor_id;
-    $promos = get_transient($cache_key);
+// Register Promo Share submenu
+add_action('admin_menu', 'amrod_register_promo_share_menu');
+function amrod_register_promo_share_menu() {
+    if (!class_exists('WooCommerce')) return;
     
-    if ($promos === false) {
-        $active_vendor = woosync_get_vendor_by_id($vendor_id);
-        if (!$active_vendor) {
-            return [];
-        }
-        
-        $token = woosync_get_token($active_vendor);
-        if (!$token) {
-            return [];
-        }
-        
-        $data = woosync_get_api_data($active_vendor, '/api/v1/Products/', $token);
-        if (!$data || !isset($data['products'])) {
-            return [];
-        }
-        
-        $promos = [];
-        foreach ($data['products'] as $product) {
-            $price = floatval($product['Price'] ?? 0);
-            $sale_price = floatval($product['SalePrice'] ?? 0);
-            
-            $is_promo = false;
-            $is_clearance = false;
-            $is_sale = false;
-            $is_featured = false;
-            $is_deal = false;
-            
-            // Check for sale price
-            if ($sale_price > 0 && $sale_price < $price) {
-                $is_promo = true;
-                $is_sale = true;
-            }
-            
-            // Check for promotional flags or images
-            if (!empty($product['BannerImage']) || !empty($product['HeroImage'])) {
-                $is_promo = true;
-                $is_featured = true;
-            }
-            
-            // Check for clearance flags
-            $tags = strtolower($product['Tags'] ?? '');
-            if (strpos($tags, 'clearance') !== false) {
-                $is_promo = true;
-                $is_clearance = true;
-            }
-            
-            if (strpos($tags, 'deal') !== false || strpos($tags, 'deal of the day') !== false) {
-                $is_promo = true;
-                $is_deal = true;
-            }
-            
-            if ($is_promo) {
-                $image = '';
-                if (!empty($product['Images'][0]['Url'])) {
-                    $image = $product['Images'][0]['Url'];
-                } elseif (!empty($product['BannerImage'])) {
-                    $image = $product['BannerImage'];
-                } elseif (!empty($product['HeroImage'])) {
-                    $image = $product['HeroImage'];
-                }
-                
-                $discount_percent = 0;
-                if ($sale_price > 0 && $sale_price < $price) {
-                    $discount_percent = round((($price - $sale_price) / $price) * 100);
-                }
-                
-                $promos[] = [
-                    'id' => $product['ProductCode'] ?? uniqid(),
-                    'name' => $product['Description'] ?? 'Product',
-                    'price' => number_format($price, 2, '.', ''),
-                    'sale_price' => number_format($sale_price > 0 ? $sale_price : $price, 2, '.', ''),
-                    'image' => $image,
-                    'url' => get_permalink(wc_get_product_id_by_sku($product['ProductCode'] ?? '')) ?: home_url(),
-                    'is_clearance' => $is_clearance,
-                    'is_sale' => $is_sale,
-                    'is_featured' => $is_featured,
-                    'is_deal' => $is_deal,
-                    'discount_percent' => $discount_percent
-                ];
-            }
-        }
-        
-        set_transient($cache_key, $promos, HOUR_IN_SECONDS);
+    add_submenu_page(
+        'amrod-sync',
+        'Promo Share',
+        '6. Promo Share',
+        'manage_options',
+        'amrod-sync-promo-share',
+        'amrod_render_promo_share_page'
+    );
+}
+
+// Enqueue promo share JS
+add_action('admin_enqueue_scripts', 'amrod_enqueue_promo_share_assets');
+function amrod_enqueue_promo_share_assets($hook) {
+    if (strpos($hook, 'amrod-sync-promo-share') === false) return;
+    
+    // Bootstrap Icons
+    wp_enqueue_style('bootstrap-icons', 'https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css', [], '1.10.0');
+    
+    // Promo Share JS
+    wp_enqueue_script('amrod-promo-share-js', AMROD_SYNC_ASSETS . 'js/promo-share.js', ['jquery'], AMROD_SYNC_VERSION, true);
+    wp_enqueue_script('amrod-tier-settings-js', AMROD_SYNC_ASSETS . 'js/tier-settings.js', ['jquery'], AMROD_SYNC_VERSION, true);
+    
+    // Localize data
+    wp_localize_script('amrod-promo-share-js', 'amrodSyncData', [
+        'ajaxUrl' => admin_url('admin-ajax.php'),
+        'nonce' => wp_create_nonce('amrod_sync_nonce'),
+    ]);
+}
+
+// Fetch promos from Amrod API
+function woosync_fetch_promos($vendor_id = 'amrod') {
+    $cache_key = 'woosync_promos_' . $vendor_id;
+    $cached = get_transient($cache_key);
+    
+    if ($cached !== false) {
+        return $cached;
     }
+    
+    $token = amrod_get_token();
+    if (!$token) {
+        return ['error' => 'Failed to obtain API token'];
+    }
+    
+    $endpoints = amrod_get_endpoints();
+    $products_ep = $endpoints['products'] ?? null;
+    
+    if (!$products_ep || !$products_ep['enabled']) {
+        return ['error' => 'Products endpoint not enabled'];
+    }
+    
+    $products_url = get_option('amrod_api_url', 'https://vendorapi.amrod.co.za') . $products_ep['path'];
+    $products = amrod_get_endpoint($token, $products_url);
+    
+    if ($products === false || !is_array($products)) {
+        return ['error' => 'Failed to fetch products from API'];
+    }
+    
+    $mapping = get_option('amrod_field_mapping', []);
+    
+    // Filter and process promos
+    $promos = [];
+    $now = current_time('mysql');
+    $seven_days_ago = date('Y-m-d H:i:s', strtotime('-7 days'));
+    
+    foreach ($products as $product) {
+        $is_promo = false;
+        $promo = [
+            'product_code' => $product[$mapping['sku'] ?? 'ProductCode'] ?? '',
+            'sku' => $product[$mapping['sku'] ?? 'ProductCode'] ?? '',
+            'name' => $product[$mapping['name'] ?? 'Description'] ?? '',
+            'price' => floatval($product[$mapping['price'] ?? 'Price'] ?? 0),
+            'sale_price' => floatval($product[$mapping['sale_price'] ?? 'SalePrice'] ?? 0),
+            'image' => $product[$mapping['image'] ?? 'ImageURL'] ?? '',
+            'banner_image' => $product[$mapping['banner_image'] ?? 'BannerImage'] ?? '',
+            'hero_image' => $product['HeroImage'] ?? '',
+            'marketing_image' => $product['MarketingImage'] ?? '',
+            'product_url' => get_permalink(wc_get_product_id_by_sku($product[$mapping['sku'] ?? 'ProductCode'] ?? '')) ?: '#',
+            'clearance' => false,
+            'on_sale' => false,
+            'special' => false,
+            'deal_of_day' => false,
+            'featured' => false,
+            'campaign_type' => 'all',
+            'campaign_end' => '',
+            'is_new' => false,
+            'created_at' => $product['CreatedAt'] ?? '',
+        ];
+        
+        // Check promo flags
+        $clearance_field = $mapping['clearance'] ?? 'Clearance';
+        $deal_field = $mapping['deal_of_day'] ?? 'DealOfTheDay';
+        
+        // Clearance check
+        if (!empty($product[$clearance_field]) && in_array(strtolower($product[$clearance_field]), ['true', '1', 'yes', 'clearance'])) {
+            $promo['clearance'] = true;
+            $is_promo = true;
+        }
+        
+        // OnSale check
+        if (!empty($product['OnSale']) && in_array(strtolower($product['OnSale']), ['true', '1', 'yes'])) {
+            $promo['on_sale'] = true;
+            $is_promo = true;
+        }
+        
+        // Special check
+        if (!empty($product['Special']) && in_array(strtolower($product['Special']), ['true', '1', 'yes'])) {
+            $promo['special'] = true;
+            $is_promo = true;
+        }
+        
+        // Deal of the day check
+        if (!empty($product[$deal_field]) && in_array(strtolower($product[$deal_field]), ['true', '1', 'yes'])) {
+            $promo['deal_of_day'] = true;
+            $is_promo = true;
+        }
+        
+        // Featured check
+        if (!empty($product['Featured']) && in_array(strtolower($product['Featured']), ['true', '1', 'yes'])) {
+            $promo['featured'] = true;
+            $is_promo = true;
+        }
+        
+        // Has sale price (discounted item)
+        if ($promo['sale_price'] > 0 && $promo['sale_price'] < $promo['price']) {
+            $is_promo = true;
+        }
+        
+        // Has banner/marketing image
+        if (!empty($promo['banner_image']) || !empty($promo['hero_image']) || !empty($promo['marketing_image'])) {
+            $is_promo = true;
+        }
+        
+        // Check if new (added in last 7 days)
+        if (!empty($promo['created_at'])) {
+            try {
+                $created = strtotime($promo['created_at']);
+                if ($created && $created > strtotime($seven_days_ago)) {
+                    $promo['is_new'] = true;
+                }
+            } catch (Exception $e) {
+                // Ignore date parsing errors
+            }
+        }
+        
+        // Campaign end date
+        if (!empty($product['CampaignEnd']) || !empty($product['SaleEndDate'])) {
+            $promo['campaign_end'] = $product['CampaignEnd'] ?? $product['SaleEndDate'] ?? '';
+        }
+        
+        // Set campaign type for filtering
+        if ($promo['clearance']) {
+            $promo['campaign_type'] = 'clearance';
+        } elseif ($promo['deal_of_day']) {
+            $promo['campaign_type'] = 'deal';
+        } elseif ($promo['on_sale']) {
+            $promo['campaign_type'] = 'sale';
+        } elseif ($promo['featured']) {
+            $promo['campaign_type'] = 'featured';
+        }
+        
+        if ($is_promo) {
+            $promos[] = $promo;
+        }
+    }
+    
+    // Cache for 1 hour
+    set_transient($cache_key, $promos, HOUR_IN_SECONDS);
+    update_option('woosync_last_promo_fetch', $now);
     
     return $promos;
 }
 
-// ===== TIERED PRICING TAB =====
-function woosync_tab_pricing() {
-    $enabled = get_option('woosync_tiered_pricing_enabled', false);
-    $default_markup = get_option('woosync_default_markup', 30);
-    $show_to_logged_out = get_option('woosync_show_pricing_to_logged_out', false);
-    $role_markups = get_option('woosync_role_markups', []);
-    $user_markups = get_option('woosync_user_markups', []);
-    $minimum_margin = get_option('woosync_minimum_margin', 10);
-    $maximum_discount = get_option('woosync_maximum_discount', 50);
-    $clearance_minimum = get_option('woosync_clearance_minimum', 0);
-    
-    $roles = woosync_get_editable_roles();
-    $products = woosync_get_sync_products();
-    $customers = woosync_get_customer_pricing();
+// Promo Share Page Renderer
+function amrod_render_promo_share_page() {
+    $last_fetch = get_option('woosync_last_promo_fetch', 'Never');
+    $connected = !empty(get_option('amrod_username')) && !empty(get_option('amrod_password'));
     ?>
-    <div class="tab-pane fade show active tiered-pricing-container">
-        <div id="pricingNotice"></div>
+    <div class="container-fluid mt-4 amrod-container" id="promoShareTab">
+        <?php amrod_breadcrumb(['Dashboard' => '?page=amrod-sync', 'Promo Share' => false]); ?>
         
-        <div class="row">
-            <div class="col-md-4">
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h5 class="mb-0">⚙️ Pricing Settings</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="settings-toggle">
-                            <input type="checkbox" id="tieredPricingEnabled" class="form-check-input" <?php checked($enabled); ?>>
-                            <label for="tieredPricingEnabled">Enable Tiered Pricing</label>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Default Markup %</label>
-                            <input type="number" id="defaultMarkup" class="form-control" value="<?php echo esc_attr($default_markup); ?>" min="0" max="500">
-                        </div>
-                        
-                        <div class="settings-toggle">
-                            <input type="checkbox" id="showToLoggedOut" class="form-check-input" <?php checked($show_to_logged_out); ?>>
-                            <label for="showToLoggedOut">Show to logged-out users</label>
-                        </div>
-                        
-                        <button type="button" id="applyToAllBtn" class="btn btn-outline-primary w-100 mt-3">Apply to All</button>
-                    </div>
-                </div>
-                
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h5 class="mb-0">📋 Pricing Rules</h5>
-                    </div>
-                    <div class="card-body pricing-rules-form">
-                        <div class="mb-3">
-                            <label class="form-label">Minimum Margin %</label>
-                            <input type="number" id="minimumMargin" class="form-control" value="<?php echo esc_attr($minimum_margin); ?>" min="0" max="100">
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Maximum Discount %</label>
-                            <input type="number" id="maximumDiscount" class="form-control" value="<?php echo esc_attr($maximum_discount); ?>" min="0" max="100">
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Clearance Minimum %</label>
-                            <input type="number" id="clearanceMinimum" class="form-control" value="<?php echo esc_attr($clearance_minimum); ?>" min="0" max="100">
-                        </div>
-                        
-                        <button type="button" id="savePricingRulesBtn" class="btn btn-primary w-100">Save Rules</button>
-                    </div>
-                </div>
+        <!-- Header -->
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h1 class="mb-0">📣 Promo Share</h1>
+                <small class="text-muted">Share promotions and campaigns to social media</small>
             </div>
-            
-            <div class="col-md-4">
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h5 class="mb-0">👥 Role Tiers</h5>
-                    </div>
-                    <div class="card-body">
-                        <table class="table table-sm tier-table">
-                            <thead>
-                                <tr>
-                                    <th>Role</th>
-                                    <th>Markup %</th>
-                                    <th>Enabled</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($roles as $role => $label): ?>
-                                <?php 
-                                    $markup = $role_markups[$role]['markup'] ?? $default_markup;
-                                    $role_enabled = $role_markups[$role]['enabled'] ?? true;
-                                ?>
-                                <tr data-role="<?php echo esc_attr($role); ?>">
-                                    <td><?php echo esc_html($label); ?></td>
-                                    <td>
-                                        <span class="markup-display"><span class="markup-value"><?php echo $markup; ?>%</span></span>
-                                        <span class="markup-edit" style="display:none;"></span>
-                                    </td>
-                                    <td>
-                                        <input type="checkbox" class="tier-enabled-checkbox" <?php checked($role_enabled); ?>>
-                                    </td>
-                                    <td class="tier-actions">
-                                        <button type="button" class="btn btn-sm btn-outline-primary tier-edit-btn">Edit</button>
-                                        <button type="button" class="btn btn-sm btn-success tier-save-btn" style="display:none;">Save</button>
-                                        <button type="button" class="btn btn-sm btn-secondary tier-cancel-btn" style="display:none;">Cancel</button>
-                                    </td>
-                                </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="col-md-4">
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h5 class="mb-0">👤 Individual Customer Pricing</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="input-group mb-3">
-                            <input type="text" id="customerSearchInput" class="form-control" placeholder="Search by name or email...">
-                            <button type="button" id="searchCustomerBtn" class="btn btn-primary">Search</button>
-                        </div>
-                        
-                        <div id="customerSearchResults" class="mb-3"></div>
-                        
-                        <div class="bulk-actions">
-                            <button type="button" id="exportPricingBtn" class="btn btn-sm btn-outline-primary">📥 Export CSV</button>
-                            <button type="button" id="importPricingBtn" class="btn btn-sm btn-outline-secondary">📤 Import CSV</button>
-                            <input type="file" id="importPricingFile" accept=".csv" style="display:none;">
-                        </div>
-                        
-                        <table class="table table-sm">
-                            <thead>
-                                <tr>
-                                    <th>Customer</th>
-                                    <th>Email</th>
-                                    <th>Markup</th>
-                                    <th>Tier</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="customerPricingBody">
-                                <?php if (empty($customers)): ?>
-                                <tr>
-                                    <td colspan="5" class="text-center text-muted">No custom pricing configured</td>
-                                </tr>
-                                <?php else: ?>
-                                <?php foreach ($customers as $customer): ?>
-                                <tr class="customer-row" data-user="<?php echo esc_attr($customer['id']); ?>">
-                                    <td><?php echo esc_html($customer['name']); ?></td>
-                                    <td><?php echo esc_html($customer['email']); ?></td>
-                                    <td>
-                                        <span class="markup-display"><span class="markup-value"><?php echo $customer['markup']; ?>%</span></span>
-                                        <span class="markup-edit" style="display:none;"></span>
-                                    </td>
-                                    <td><span class="tier-value"><?php echo esc_html($customer['tier']); ?></span></td>
-                                    <td>
-                                        <div class="customer-actions">
-                                            <button type="button" class="btn btn-sm btn-outline-primary edit-customer-btn" data-user="<?php echo esc_attr($customer['id']); ?>">Edit</button>
-                                            <button type="button" class="btn btn-sm btn-success save-customer-btn" data-user="<?php echo esc_attr($customer['id']); ?>" style="display:none;">Save</button>
-                                            <button type="button" class="btn btn-sm btn-secondary cancel-customer-btn" data-user="<?php echo esc_attr($customer['id']); ?>" style="display:none;">Cancel</button>
-                                            <button type="button" class="btn btn-sm btn-outline-danger remove-customer-btn" data-user="<?php echo esc_attr($customer['id']); ?>">Remove</button>
-                                        </div>
-                                    </td>
-                                </tr>
-                                <?php endforeach; ?>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+            <div class="d-flex gap-2 align-items-center">
+                <small class="text-muted">Last updated: <?php echo $last_fetch; ?></small>
+                <button type="button" id="refreshPromosBtn" class="btn btn-outline-primary">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                </button>
             </div>
         </div>
+
+        <!-- Error Container -->
+        <div id="promoError" style="display: none;"></div>
+
+        <?php if (!$connected): ?>
+        <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle me-2"></i>
+            <strong>API not connected.</strong> Please configure your Amrod API credentials in 
+            <a href="?page=amrod-sync-settings" class="alert-link">Settings</a> to load promos.
+        </div>
+        <?php else: ?>
         
-        <div class="row">
-            <div class="col-md-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h5 class="mb-0">💰 Price Preview</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="mb-3">
-                                    <label class="form-label">Select Product</label>
-                                    <select id="previewProduct" class="form-select">
-                                        <option value="">-- Select Product --</option>
-                                        <?php foreach ($products as $product): ?>
-                                        <option value="<?php echo esc_attr($product['id']); ?>"><?php echo esc_html($product['name']); ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">Select Customer/Role</label>
-                                    <select id="previewCustomer" class="form-select">
-                                        <option value="">-- Default Pricing --</option>
-                                        <?php foreach ($customers as $customer): ?>
-                                        <option value="<?php echo esc_attr($customer['id']); ?>"><?php echo esc_html($customer['name']); ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-8">
-                                <div id="pricePreviewResult">
-                                    <div class="text-muted">Select a product to preview pricing</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+        <!-- Hero Banner -->
+        <div id="promoHero">
+            <div class="promo-hero-placeholder">
+                <p class="text-muted">Loading promos...</p>
+            </div>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="promo-filter-bar">
+            <button type="button" class="promo-filter-btn active" data-filter="all">All</button>
+            <button type="button" class="promo-filter-btn" data-filter="clearance">🔥 Clearance</button>
+            <button type="button" class="promo-filter-btn" data-filter="sale">🏷️ Sale</button>
+            <button type="button" class="promo-filter-btn" data-filter="featured">⭐ Featured</button>
+            <button type="button" class="promo-filter-btn" data-filter="deal">💰 Deal of the Day</button>
+        </div>
+
+        <!-- Promo Grid -->
+        <div class="row" id="promoGrid">
+            <div class="col-12 text-center py-5">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
                 </div>
             </div>
         </div>
-    </div>
-    <?php
-}
 
-function woosync_get_editable_roles() {
-    global $wp_roles;
-    $roles = [];
-    foreach ($wp_roles->roles as $role => $data) {
-        if (!in_array($role, ['administrator'])) {
-            $roles[$role] = translate_user_role($data['name']);
-        }
-    }
-    return $roles;
-}
-
-function woosync_get_sync_products() {
-    $products = [];
-    $args = [
-        'post_type' => 'product',
-        'posts_per_page' => 100,
-        'post_status' => 'publish',
-        'meta_query' => [
-            ['key' => '_woosync_vendor_id', 'compare' => 'EXISTS']
-        ]
-    ];
-    
-    $query = new WP_Query($args);
-    foreach ($query->posts as $post) {
-        $product = wc_get_product($post->ID);
-        if ($product) {
-            $products[] = [
-                'id' => $post->ID,
-                'name' => $product->get_name(),
-                'price' => $product->get_price()
-            ];
-        }
-    }
-    
-    return $products;
-}
-
-function woosync_get_customer_pricing() {
-    $user_markups = get_option('woosync_user_markups', []);
-    $customers = [];
-    
-    foreach ($user_markups as $user_id => $data) {
-        $user = get_user_by('id', $user_id);
-        if ($user) {
-            $customers[] = [
-                'id' => $user_id,
-                'name' => $user->display_name,
-                'email' => $user->user_email,
-                'markup' => $data['markup'] ?? 30,
-                'tier' => $data['tier'] ?? 'Standard'
-            ];
-        }
-    }
-    
-    return $customers;
-}
-
-// ===== TIERED PRICING FUNCTIONS =====
-function woosync_get_user_markup($user_id) {
-    $user_markups = get_option('woosync_user_markups', []);
-    
-    // Individual override
-    if (isset($user_markups[$user_id])) {
-        return floatval($user_markups[$user_id]['markup']);
-    }
-    
-    // Role-based
-    $user = get_user_by('id', $user_id);
-    if ($user) {
-        $role_markup = woosync_get_user_role_markup($user->roles);
-        if ($role_markup !== null) {
-            return $role_markup;
-        }
-    }
-    
-    // Default
-    return floatval(get_option('woosync_default_markup', 30));
-}
-
-function woosync_get_user_role_markup($roles) {
-    $role_markups = get_option('woosync_role_markups', []);
-    
-    foreach ($roles as $role) {
-        if (isset($role_markups[$role]) && !empty($role_markups[$role]['enabled'])) {
-            return floatval($role_markups[$role]['markup']);
-        }
-    }
-    
-    return null;
-}
-
-function woosync_get_product_base_price($product_id, $vendor_id) {
-    $base_price = get_post_meta($product_id, '_woosync_base_price', true);
-    
-    if ($base_price === '') {
-        $product = wc_get_product($product_id);
-        if ($product) {
-            $base_price = $product->get_regular_price();
-        }
-    }
-    
-    return floatval($base_price ?: 0);
-}
-
-function woosync_calculate_display_price($product_id, $user_id) {
-    if (!get_option('woosync_tiered_pricing_enabled', false)) {
-        return null;
-    }
-    
-    $base_price = woosync_get_product_base_price($product_id, '');
-    if ($base_price <= 0) {
-        return null;
-    }
-    
-    $markup = woosync_get_user_markup($user_id);
-    $display_price = woosync_format_markup_price($base_price, $markup);
-    
-    return $display_price;
-}
-
-function woosync_format_markup_price($price, $markup) {
-    return round($price * (1 + $markup / 100), 2);
-}
-
-// ===== WOOCOMMERCE HOOKS FOR TIERED PRICING =====
-add_filter('woocommerce_product_get_price', 'woosync_filter_product_price', 10, 2);
-add_filter('woocommerce_product_get_sale_price', 'woosync_filter_product_sale_price', 10, 2);
-
-function woosync_filter_product_price($price, $product) {
-    if (!get_option('woosync_tiered_pricing_enabled', false)) {
-        return $price;
-    }
-    
-    $user_id = get_current_user_id();
-    
-    // Check if we should show tiered pricing to logged-out users
-    if ($user_id === 0 && !get_option('woosync_show_pricing_to_logged_out', false)) {
-        return $price;
-    }
-    
-    $new_price = woosync_calculate_display_price($product->get_id(), $user_id);
-    
-    return $new_price !== null ? $new_price : $price;
-}
-
-function woosync_filter_product_sale_price($price, $product) {
-    if (!get_option('woosync_tiered_pricing_enabled', false)) {
-        return $price;
-    }
-    
-    $user_id = get_current_user_id();
-    
-    if ($user_id === 0 && !get_option('woosync_show_pricing_to_logged_out', false)) {
-        return $price;
-    }
-    
-    $new_price = woosync_calculate_display_price($product->get_id(), $user_id);
-    
-    return $new_price !== null ? $new_price : $price;
-}
-
-// ===== SUPPLIER TIER DISPLAY (Connect & Map tab integration) =====
-function woosync_render_tier_card($vendor) {
-    $tier = $vendor['tier'] ?? 'Standard';
-    $tier_class = woosync_get_tier_css_class($tier);
-    $tier_icon = woosync_get_tier_icon($tier);
-    $status = $vendor['tier_status'] ?? 'Active';
-    $since = $vendor['tier_since'] ?? 'N/A';
-    $expiry = $vendor['tier_expiry'] ?? 'N/A';
-    $notes = $vendor['tier_notes'] ?? '';
-    ?>
-    <div class="tier-card">
-        <div class="tier-header">
-            <div class="tier-icon"><?php echo $tier_icon; ?></div>
-            <div class="tier-info">
-                <h4><?php echo esc_html($vendor['name']); ?> — <span id="tierName"><?php echo esc_html($tier); ?></span> Tier</h4>
-                <span id="tierBadge" class="tier-badge <?php echo $tier_class; ?>"><?php echo esc_html($tier); ?></span>
-            </div>
-        </div>
-        
-        <div class="tier-details">
-            <div class="tier-detail-item">
-                <div class="tier-detail-label">Your Pricing Level</div>
-                <div class="tier-detail-value"><?php echo esc_html($tier); ?></div>
-            </div>
-            <div class="tier-detail-item">
-                <div class="tier-detail-label">Status</div>
-                <div class="tier-detail-value" id="tierStatus"><?php echo esc_html($status); ?></div>
-            </div>
-            <div class="tier-detail-item">
-                <div class="tier-detail-label">Active Since</div>
-                <div class="tier-detail-value" id="tierSince"><?php echo esc_html($since); ?></div>
-            </div>
-            <div class="tier-detail-item">
-                <div class="tier-detail-label">Expiry</div>
-                <div class="tier-detail-value" id="tierExpiry"><?php echo esc_html($expiry); ?></div>
-            </div>
-        </div>
-        
-        <?php if ($notes): ?>
-        <div class="tier-notes">
-            <small class="text-muted"><?php echo esc_html($notes); ?></small>
-        </div>
         <?php endif; ?>
-        
-        <div class="tier-actions">
-            <button type="button" id="refreshTierBtn" class="btn btn-outline-primary btn-sm">🔄 Refresh Tier Status</button>
-            <a href="#" id="upgradeTierBtn" class="btn btn-outline-warning btn-sm" target="_blank">🚀 Upgrade Tier ↗</a>
-        </div>
-        
-        <div class="mt-3">
-            <label class="form-label small">Manual Tier Override</label>
-            <select id="manualTierOverride" class="form-select form-select-sm">
-                <option value="">Auto-detect</option>
-                <option value="Standard" <?php selected($tier, 'Standard'); ?>>Standard</option>
-                <option value="Bronze" <?php selected($tier, 'Bronze'); ?>>Bronze</option>
-                <option value="Silver" <?php selected($tier, 'Silver'); ?>>Silver</option>
-                <option value="Gold" <?php selected($tier, 'Gold'); ?>>Gold</option>
-                <option value="Platinum" <?php selected($tier, 'Platinum'); ?>>Platinum</option>
-            </select>
-        </div>
     </div>
-    <div id="tierNotice"></div>
-    <?php
-}
 
-function woosync_get_tier_css_class($tier) {
-    $classes = [
-        'Gold' => 'tier-gold',
-        'Silver' => 'tier-silver',
-        'Bronze' => 'tier-bronze',
-        'Platinum' => 'tier-platinum',
-        'Standard' => 'tier-standard'
-    ];
-    return $classes[$tier] ?? 'tier-standard';
-}
-
-function woosync_get_tier_icon($tier) {
-    $icons = [
-        'Gold' => '🏆',
-        'Silver' => '🥈',
-        'Bronze' => '🥉',
-        'Platinum' => '💎',
-        'Standard' => '📦'
-    ];
-    return $icons[$tier] ?? '📦';
-}
-
-function woosync_render_tier_pricing_preview($product_id, $vendor) {
-    $tier = $vendor['tier'] ?? 'Standard';
-    $markup = woosync_get_tier_markup($tier);
-    $base_price = woosync_get_product_base_price($product_id, $vendor['id'] ?? '');
-    
-    if ($base_price <= 0) {
-        return;
-    }
-    
-    $supplier_price = $base_price;
-    $your_cost = $base_price;
-    $customer_price = woosync_format_markup_price($base_price, $markup);
-    $your_margin = $customer_price - $your_cost;
-    ?>
-    <div class="tier-pricing-preview">
-        <div class="preview-header">Tier Pricing Breakdown</div>
-        <div class="preview-row supplier">
-            <span class="preview-label">Supplier Tier Price:</span>
-            <span class="preview-value">R<?php echo number_format($supplier_price, 2); ?></span>
-        </div>
-        <div class="preview-row">
-            <span class="preview-label">WooSync Markup (<?php echo $markup; ?>%):</span>
-            <span class="preview-value">+R<?php echo number_format($your_margin, 2); ?></span>
-        </div>
-        <div class="preview-divider"></div>
-        <div class="preview-row customer">
-            <span class="preview-label">Customer Sees:</span>
-            <span class="preview-value">R<?php echo number_format($customer_price, 2); ?></span>
-        </div>
-        <div class="preview-row margin">
-            <span class="preview-label">Your Margin:</span>
-            <span class="preview-value text-success">R<?php echo number_format($your_margin, 2); ?></span>
+    <!-- Email Modal -->
+    <div class="modal fade" id="promoEmailModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-envelope me-2"></i>Send Promo Email</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="promoEmailForm">
+                    <div class="modal-body">
+                        <input type="hidden" id="emailProductCode" value="">
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Product</label>
+                            <p class="form-control-plaintext" id="emailProductName">-</p>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Email Subject</label>
+                            <input type="text" id="emailSubject" class="form-control" required>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Recipients</label>
+                            <div class="email-recipient-option">
+                                <input type="radio" name="email_recipients" value="all" id="recipAll">
+                                <label for="recipAll">All customers</label>
+                            </div>
+                            <div class="email-recipient-option">
+                                <input type="radio" name="email_recipients" value="roles" id="recipRoles">
+                                <label for="recipRoles">By role (select below)</label>
+                            </div>
+                            <div class="email-recipient-option">
+                                <input type="radio" name="email_recipients" value="specific" id="recipSpecific">
+                                <label for="recipSpecific">Specific users</label>
+                            </div>
+                            
+                            <div id="emailUserList" style="display: none;">
+                                <label class="form-label mt-2">Enter user IDs (comma separated)</label>
+                                <input type="text" id="emailUserIds" class="form-control" placeholder="1, 5, 12">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" id="sendPromoEmailBtn" class="btn btn-primary">
+                            <i class="bi bi-send me-2"></i>Send Email
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
     <?php
 }
 
-function woosync_get_tier_markup($tier) {
-    $tier_markups = [
-        'Platinum' => 50,
-        'Gold' => 30,
-        'Silver' => 20,
-        'Bronze' => 10,
-        'Standard' => 0
-    ];
-    return $tier_markups[$tier] ?? 0;
+// AJAX: Fetch Promos
+add_action('wp_ajax_woosync_fetch_promos', 'amrod_ajax_fetch_promos');
+function amrod_ajax_fetch_promos() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $force_refresh = isset($_POST['force_refresh']) && $_POST['force_refresh'];
+    
+    if ($force_refresh) {
+        delete_transient('woosync_promos_amrod');
+    }
+    
+    $promos = woosync_fetch_promos('amrod');
+    
+    if (isset($promos['error'])) {
+        wp_send_json_error($promos['error']);
+    }
+    
+    wp_send_json_success(['promos' => $promos]);
 }
 
-function woosync_render_tier_savings_widget($vendor) {
-    $tier = $vendor['tier'] ?? 'Standard';
-    $savings = woosync_calculate_tier_savings($vendor);
-    ?>
-    <div class="tier-savings-widget">
-        <div class="savings-total">
-            <div class="savings-amount" id="tierSavingsTotal">R<?php echo number_format($savings['total'], 0); ?></div>
-            <div class="savings-label">Total Savings</div>
-        </div>
-        <div class="savings-detail" id="tierSavingsProducts">
-            Your <?php echo esc_html($tier); ?> tier saves you R<?php echo number_format($savings['total'], 0); ?> across <?php echo $savings['products']; ?> products
-        </div>
-    </div>
-    <div id="tierSavingsTable" class="mt-3">
-        <table class="table table-sm">
-            <thead>
-                <tr>
-                    <th>Product</th>
-                    <th>Standard Price</th>
-                    <th>Your Tier Price</th>
-                    <th>Savings/Unit</th>
-                    <th>Total Savings</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach ($savings['products_detail'] as $product): ?>
-                <tr>
-                    <td><?php echo esc_html($product['name']); ?></td>
-                    <td>R<?php echo number_format($product['standard_price'], 2); ?></td>
-                    <td>R<?php echo number_format($product['tier_price'], 2); ?></td>
-                    <td class="text-success">R<?php echo number_format($product['savings_per_unit'], 2); ?></td>
-                    <td class="text-success">R<?php echo number_format($product['total_savings'], 2); ?></td>
-                </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
-    </div>
-    <?php
-}
-
-function woosync_calculate_tier_savings($vendor) {
-    $tier = $vendor['tier'] ?? 'Standard';
-    $tier_markup = woosync_get_tier_markup($tier);
-    $standard_markup = 50; // Assume standard is 50% markup
+// AJAX: Send Promo Email
+add_action('wp_ajax_woosync_send_promo_email', 'amrod_ajax_send_promo_email');
+function amrod_ajax_send_promo_email() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
-    $products = woosync_get_sync_products();
-    $savings = [
-        'total' => 0,
-        'products' => 0,
-        'products_detail' => []
-    ];
+    $product_code = sanitize_text_field($_POST['product_code'] ?? '');
+    $subject = sanitize_text_field($_POST['subject'] ?? '');
+    $recipient_type = sanitize_text_field($_POST['recipient_type'] ?? 'all');
+    $user_ids = sanitize_text_field($_POST['user_ids'] ?? '');
     
-    foreach ($products as $product) {
-        $base_price = woosync_get_product_base_price($product['id'], $vendor['id'] ?? '');
-        if ($base_price > 0) {
-            $standard_price = woosync_format_markup_price($base_price, $standard_markup);
-            $tier_price = woosync_format_markup_price($base_price, $tier_markup);
-            $savings_per_unit = $standard_price - $tier_price;
-            
-            if ($savings_per_unit > 0) {
-                $savings['total'] += $savings_per_unit;
-                $savings['products']++;
-                $savings['products_detail'][] = [
-                    'name' => $product['name'],
-                    'standard_price' => $standard_price,
-                    'tier_price' => $tier_price,
-                    'savings_per_unit' => $savings_per_unit,
-                    'total_savings' => $savings_per_unit
-                ];
-            }
-        }
+    if (empty($product_code) || empty($subject)) {
+        wp_send_json_error('Product code and subject are required');
     }
     
-    return $savings;
-}
-
-// ===== AJAX HANDLERS FOR PROMO SHARE =====
-add_action('wp_ajax_woosync_get_promos', 'woosync_ajax_get_promos');
-function woosync_ajax_get_promos() {
-    check_ajax_referer('woosync_promo_share', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
+    // Get the product
+    $product_id = wc_get_product_id_by_sku($product_code);
+    if (!$product_id) {
+        wp_send_json_error('Product not found');
     }
-    
-    $active_vendor = woosync_get_active_vendor();
-    $promos = woosync_get_promos($active_vendor['id'] ?? '');
-    
-    wp_send_json_success($promos);
-}
-
-add_action('wp_ajax_woosync_refresh_promos', 'woosync_ajax_refresh_promos');
-function woosync_ajax_refresh_promos() {
-    check_ajax_referer('woosync_promo_share', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
-    }
-    
-    $active_vendor = woosync_get_active_vendor();
-    $vendor_id = $active_vendor['id'] ?? '';
-    
-    // Delete cached promos
-    delete_transient('woosync_promos_' . $vendor_id);
-    
-    // Refresh promos
-    $promos = woosync_get_promos($vendor_id);
-    
-    wp_send_json_success($promos);
-}
-
-// ===== AJAX HANDLERS FOR TIERED PRICING =====
-add_action('wp_ajax_woosync_save_pricing_settings', 'woosync_ajax_save_pricing_settings');
-function woosync_ajax_save_pricing_settings() {
-    check_ajax_referer('woosync_pricing', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
-    }
-    
-    update_option('woosync_tiered_pricing_enabled', isset($_POST['enabled']) && $_POST['enabled'] === 'true');
-    update_option('woosync_default_markup', floatval($_POST['default_markup'] ?? 30));
-    update_option('woosync_show_pricing_to_logged_out', isset($_POST['show_to_logged_out']) && $_POST['show_to_logged_out'] === 'true');
-    
-    wp_send_json_success(['message' => 'Settings saved']);
-}
-
-add_action('wp_ajax_woosync_save_role_markup', 'woosync_ajax_save_role_markup');
-function woosync_ajax_save_role_markup() {
-    check_ajax_referer('woosync_pricing', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
-    }
-    
-    $role = sanitize_key($_POST['role'] ?? '');
-    $markup = floatval($_POST['markup'] ?? 30);
-    $enabled = isset($_POST['enabled']) && $_POST['enabled'] === 'true';
-    
-    $role_markups = get_option('woosync_role_markups', []);
-    $role_markups[$role] = [
-        'markup' => $markup,
-        'enabled' => $enabled
-    ];
-    
-    update_option('woosync_role_markups', $role_markups);
-    
-    wp_send_json_success(['message' => 'Role markup saved']);
-}
-
-add_action('wp_ajax_woosync_toggle_role_tier', 'woosync_ajax_toggle_role_tier');
-function woosync_ajax_toggle_role_tier() {
-    check_ajax_referer('woosync_pricing', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
-    }
-    
-    $role = sanitize_key($_POST['role'] ?? '');
-    $enabled = isset($_POST['enabled']) && $_POST['enabled'] === 'true';
-    
-    $role_markups = get_option('woosync_role_markups', []);
-    if (!isset($role_markups[$role])) {
-        $role_markups[$role] = ['markup' => 30, 'enabled' => true];
-    }
-    $role_markups[$role]['enabled'] = $enabled;
-    
-    update_option('woosync_role_markups', $role_markups);
-    
-    wp_send_json_success(['message' => 'Role tier updated']);
-}
-
-add_action('wp_ajax_woosync_search_customers', 'woosync_ajax_search_customers');
-function woosync_ajax_search_customers() {
-    check_ajax_referer('woosync_pricing', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
-    }
-    
-    $query = sanitize_text_field($_POST['query'] ?? '');
-    
-    $users = get_users([
-        'search' => '*' . $query . '*',
-        'search_columns' => ['display_name', 'user_email'],
-        'number' => 10
-    ]);
-    
-    $results = [];
-    foreach ($users as $user) {
-        $results[] = [
-            'id' => $user->ID,
-            'name' => $user->display_name,
-            'email' => $user->user_email,
-            'role' => implode(', ', $user->roles)
-        ];
-    }
-    
-    wp_send_json_success($results);
-}
-
-add_action('wp_ajax_woosync_add_customer_pricing', 'woosync_ajax_add_customer_pricing');
-function woosync_ajax_add_customer_pricing() {
-    check_ajax_referer('woosync_pricing', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
-    }
-    
-    $user_id = intval($_POST['user_id'] ?? 0);
-    $default_markup = get_option('woosync_default_markup', 30);
-    
-    $user_markups = get_option('woosync_user_markups', []);
-    if (!isset($user_markups[$user_id])) {
-        $user_markups[$user_id] = [
-            'markup' => $default_markup,
-            'tier' => 'Standard'
-        ];
-        update_option('woosync_user_markups', $user_markups);
-    }
-    
-    wp_send_json_success(['message' => 'Customer pricing added']);
-}
-
-add_action('wp_ajax_woosync_remove_customer_pricing', 'woosync_ajax_remove_customer_pricing');
-function woosync_ajax_remove_customer_pricing() {
-    check_ajax_referer('woosync_pricing', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
-    }
-    
-    $user_id = intval($_POST['user_id'] ?? 0);
-    
-    $user_markups = get_option('woosync_user_markups', []);
-    unset($user_markups[$user_id]);
-    update_option('woosync_user_markups', $user_markups);
-    
-    wp_send_json_success(['message' => 'Customer pricing removed']);
-}
-
-add_action('wp_ajax_woosync_update_customer_markup', 'woosync_ajax_update_customer_markup');
-function woosync_ajax_update_customer_markup() {
-    check_ajax_referer('woosync_pricing', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
-    }
-    
-    $user_id = intval($_POST['user_id'] ?? 0);
-    $markup = floatval($_POST['markup'] ?? 30);
-    
-    $user_markups = get_option('woosync_user_markups', []);
-    if (isset($user_markups[$user_id])) {
-        $user_markups[$user_id]['markup'] = $markup;
-        update_option('woosync_user_markups', $user_markups);
-    }
-    
-    wp_send_json_success(['message' => 'Markup updated']);
-}
-
-add_action('wp_ajax_woosync_save_customer_pricing', 'woosync_ajax_save_customer_pricing');
-function woosync_ajax_save_customer_pricing() {
-    check_ajax_referer('woosync_pricing', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
-    }
-    
-    $user_id = intval($_POST['user_id'] ?? 0);
-    $markup = floatval($_POST['markup'] ?? 30);
-    $tier = sanitize_text_field($_POST['tier'] ?? 'Standard');
-    
-    $user_markups = get_option('woosync_user_markups', []);
-    $user_markups[$user_id] = [
-        'markup' => $markup,
-        'tier' => $tier
-    ];
-    update_option('woosync_user_markups', $user_markups);
-    
-    wp_send_json_success(['message' => 'Customer pricing saved']);
-}
-
-add_action('wp_ajax_woosync_get_customer_pricing', 'woosync_ajax_get_customer_pricing');
-function woosync_ajax_get_customer_pricing() {
-    check_ajax_referer('woosync_pricing', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
-    }
-    
-    $customers = woosync_get_customer_pricing();
-    
-    wp_send_json_success($customers);
-}
-
-add_action('wp_ajax_woosync_get_price_preview', 'woosync_ajax_get_price_preview');
-function woosync_ajax_get_price_preview() {
-    check_ajax_referer('woosync_pricing', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
-    }
-    
-    $product_id = intval($_POST['product_id'] ?? 0);
-    $customer_id = intval($_POST['customer_id'] ?? 0);
     
     $product = wc_get_product($product_id);
     if (!$product) {
         wp_send_json_error('Product not found');
     }
     
-    $base_price = woosync_get_product_base_price($product_id, '');
-    $markup = $customer_id > 0 ? woosync_get_user_markup($customer_id) : floatval(get_option('woosync_default_markup', 30));
-    $customer_price = woosync_format_markup_price($base_price, $markup);
-    $your_margin = $customer_price - $base_price;
+    // Get recipients
+    $recipients = [];
+    
+    switch ($recipient_type) {
+        case 'all':
+            $customers = get_users(['role' => 'customer']);
+            $recipients = array_map(function($user) {
+                return $user->user_email;
+            }, $customers);
+            break;
+            
+        case 'roles':
+            $subscribers = get_users(['role' => 'subscriber']);
+            $recipients = array_map(function($user) {
+                return $user->user_email;
+            }, $subscribers);
+            break;
+            
+        case 'specific':
+            if (!empty($user_ids)) {
+                $ids = array_map('intval', explode(',', $user_ids));
+                foreach ($ids as $id) {
+                    $user = get_user_by('id', $id);
+                    if ($user) {
+                        $recipients[] = $user->user_email;
+                    }
+                }
+            }
+            break;
+    }
+    
+    if (empty($recipients)) {
+        wp_send_json_error('No recipients found');
+    }
+    
+    // Build email content
+    $product_name = $product->get_name();
+    $product_url = get_permalink($product_id);
+    $image_url = get_the_post_thumbnail_url($product_id, 'large') ?: '';
+    $regular_price = $product->get_regular_price();
+    $sale_price = $product->get_sale_price();
+    
+    $message = "Check out this promo from MediaPlatform!\n\n";
+    $message .= "{$product_name}\n";
+    if ($sale_price) {
+        $message .= "Was: R{$regular_price} | Now: R{$sale_price}\n";
+    } else {
+        $message .= "Price: R{$regular_price}\n";
+    }
+    $message .= "\nShop now: {$product_url}\n\n";
+    $message .= "#promo #brandedmerch";
+    
+    // Send emails
+    $sent = 0;
+    $headers = ['Content-Type: text/html; charset=UTF-8'];
+    
+    foreach ($recipients as $email) {
+        $result = wp_mail($email, $subject, nl2br($message), $headers);
+        if ($result) {
+            $sent++;
+        }
+    }
     
     wp_send_json_success([
-        'supplier_price' => number_format($base_price, 2, '.', ''),
-        'your_cost' => number_format($base_price, 2, '.', ''),
-        'customer_price' => number_format($customer_price, 2, '.', ''),
-        'your_margin' => number_format($your_margin, 2, '.', '')
+        'message' => "Email sent to {$sent} recipient(s)",
+        'sent' => $sent,
+        'total' => count($recipients)
     ]);
 }
 
-add_action('wp_ajax_woosync_save_pricing_rules', 'woosync_ajax_save_pricing_rules');
-function woosync_ajax_save_pricing_rules() {
-    check_ajax_referer('woosync_pricing', 'nonce');
+// =============================================================================
+// TIERED PRICING SYSTEM - WooSync v3.2
+// =============================================================================
+
+// ===== REGISTER PRICING SETTINGS =====
+add_action('admin_init', 'amrod_register_pricing_settings');
+function amrod_register_pricing_settings() {
+    register_setting('amrod_pricing_group', 'woosync_tiered_pricing_enabled');
+    register_setting('amrod_pricing_group', 'woosync_default_markup');
+    register_setting('amrod_pricing_group', 'woosync_role_markups');
+    register_setting('amrod_pricing_group', 'woosync_user_markups');
+    register_setting('amrod_pricing_group', 'woosync_minimum_margin');
+    register_setting('amrod_pricing_group', 'woosync_maximum_discount');
+    register_setting('amrod_pricing_group', 'woosync_clearance_minimum');
+    register_setting('amrod_pricing_group', 'woosync_show_prices_logged_out');
+    register_setting('amrod_pricing_group', 'woosync_customer_tiers');
+}
+
+// ===== ADD PRICING TAB TO MENU =====
+add_action('admin_menu', 'amrod_register_pricing_menu');
+function amrod_register_pricing_menu() {
+    if (!class_exists('WooCommerce')) return;
     
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
+    add_submenu_page(
+        'amrod-sync',
+        'Pricing',
+        '6. Pricing',
+        'manage_options',
+        'amrod-sync-pricing',
+        'amrod_render_pricing_page'
+    );
+}
+
+// ===== ENQUEUE PRICING ASSETS =====
+add_action('admin_enqueue_scripts', 'amrod_enqueue_pricing_assets');
+function amrod_enqueue_pricing_assets($hook) {
+    if (strpos($hook, 'amrod-sync-pricing') === false) return;
+    
+    // DataTables CSS (optional)
+    wp_enqueue_style('amrod-pricing-css', AMROD_SYNC_ASSETS . 'css/admin.css', ['bootstrap5-css'], AMROD_SYNC_VERSION);
+    
+    // Pricing JS
+    wp_enqueue_script('amrod-pricing-js', AMROD_SYNC_ASSETS . 'js/pricing.js', ['jquery'], AMROD_SYNC_VERSION, true);
+    
+    // Localize data
+    wp_localize_script('amrod-pricing-js', 'amrodSyncData', [
+        'ajaxUrl' => admin_url('admin-ajax.php'),
+        'nonce' => wp_create_nonce('amrod_sync_nonce'),
+    ]);
+}
+
+// ===== RENDER PRICING PAGE =====
+function amrod_render_pricing_page() {
+    $tiered_enabled = get_option('woosync_tiered_pricing_enabled', false);
+    $default_markup = get_option('woosync_default_markup', 30);
+    $role_markups = get_option('woosync_role_markups', []);
+    $user_markups = get_option('woosync_user_markups', []);
+    $min_margin = get_option('woosync_minimum_margin', 0);
+    $max_discount = get_option('woosync_maximum_discount', 0);
+    $clearance_min = get_option('woosync_clearance_minimum', 0);
+    $show_logged_out = get_option('woosync_show_prices_logged_out', false);
+    $customer_tiers = get_option('woosync_customer_tiers', []);
+    
+    // Get all WooCommerce roles
+    global $wp_roles;
+    $all_roles = $wp_roles->get_names();
+    
+    // Get default WooCommerce roles with their markups
+    $default_roles = [
+        'customer' => ['name' => 'Customer', 'markup' => $default_markup, 'enabled' => true],
+        'subscriber' => ['name' => 'Subscriber', 'markup' => $default_markup, 'enabled' => true],
+        'wholesale_customer' => ['name' => 'Wholesale', 'markup' => $default_markup - 10, 'enabled' => false],
+    ];
+    
+    // Merge with stored markups
+    $role_markups = is_array($role_markups) ? $role_markups : [];
+    foreach ($all_roles as $slug => $name) {
+        if (!isset($role_markups[$slug])) {
+            $role_markups[$slug] = [
+                'name' => $name,
+                'markup' => $default_markup,
+                'enabled' => ($slug === 'customer')
+            ];
+        }
+    }
+    ?>
+    <div class="container-fluid mt-4 amrod-container">
+        <?php amrod_breadcrumb(['Dashboard' => '?page=amrod-sync', 'Pricing' => false]); ?>
+        
+        <!-- Header -->
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h1 class="mb-0">💰 Pricing</h1>
+                <small class="text-muted">Tiered markup pricing per user role and customer</small>
+            </div>
+            <div class="form-check form-switch pricing-toggle">
+                <input class="form-check-input" type="checkbox" id="tieredPricingEnabled" <?php checked($tiered_enabled); ?>>
+                <label class="form-check-label fw-bold" for="tieredPricingEnabled">
+                    <?php echo $tiered_enabled ? '<span class="text-success">Active</span>' : '<span class="text-muted">Disabled</span>'; ?>
+                </label>
+            </div>
+        </div>
+
+        <!-- Quick Stats -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="pricing-stat-card">
+                    <div class="stat-value"><?php echo count($role_markups); ?></div>
+                    <div class="stat-label">User Roles</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="pricing-stat-card">
+                    <div class="stat-value"><?php echo count($user_markups); ?></div>
+                    <div class="stat-label">Custom Customers</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="pricing-stat-card">
+                    <div class="stat-value"><?php echo $default_markup; ?>%</div>
+                    <div class="stat-label">Default Markup</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="pricing-stat-card">
+                    <div class="stat-value"><?php echo $min_margin; ?>%</div>
+                    <div class="stat-label">Min Margin Floor</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pricing Tabs -->
+        <ul class="nav nav-tabs pricing-tabs mb-3" id="pricingTabs" role="tablist">
+            <li class="nav-item">
+                <button class="nav-link active" id="settings-tab" data-bs-toggle="tab" data-bs-target="#pricing-settings" type="button">⚙️ Settings</button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" id="roles-tab" data-bs-toggle="tab" data-bs-target="#role-tiers" type="button">👥 Role Tiers</button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" id="customers-tab" data-bs-toggle="tab" data-bs-target="#customer-pricing" type="button">👤 Customer Pricing</button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" id="preview-tab" data-bs-toggle="tab" data-bs-target="#price-preview" type="button">🔍 Price Preview</button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" id="rules-tab" data-bs-toggle="tab" data-bs-target="#pricing-rules" type="button">📋 Rules</button>
+            </li>
+        </ul>
+
+        <div class="tab-content" id="pricingTabContent">
+            <!-- SETTINGS TAB -->
+            <div class="tab-pane fade show active" id="pricing-settings" role="tabpanel">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card pricing-card">
+                            <div class="card-header">
+                                <h5 class="mb-0">⚙️ General Settings</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Default/Blanket Markup %</label>
+                                    <div class="input-group">
+                                        <input type="number" id="defaultMarkup" class="form-control" value="<?php echo esc_attr($default_markup); ?>" min="0" max="500" step="1">
+                                        <span class="input-group-text">%</span>
+                                        <button class="btn btn-primary" id="saveDefaultMarkup">💾 Save</button>
+                                    </div>
+                                    <small class="text-muted">This is the fallback markup for all users/roles without custom pricing</small>
+                                </div>
+                                
+                                <hr>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Actions</label>
+                                    <div class="d-grid gap-2">
+                                        <button class="btn btn-outline-primary" id="applyBlanketAll">
+                                            📋 Apply Blanket to All Roles
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <hr>
+                                
+                                <div class="mb-3">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="showPricesLoggedOut" <?php checked($show_logged_out); ?>>
+                                        <label class="form-check-label" for="showPricesLoggedOut">
+                                            Show prices with markup to logged-out users
+                                        </label>
+                                    </div>
+                                    <small class="text-muted">When disabled, logged-out users see supplier prices</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card pricing-card">
+                            <div class="card-header">
+                                <h5 class="mb-0">📖 How Tiered Pricing Works</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="alert alert-info">
+                                    <h6><strong>Priority Order (highest to lowest):</strong></h6>
+                                    <ol class="mb-2">
+                                        <li><strong>Per Individual Customer</strong> — Custom markup for specific customers</li>
+                                        <li><strong>Per User Role</strong> — Markup applied to all users with that role</li>
+                                        <li><strong>Per Product Base Price</strong> — Optional override (in product edit)</li>
+                                        <li><strong>Default/Blanket Markup</strong> — Fallback for everyone else</li>
+                                    </ol>
+                                </div>
+                                
+                                <h6><strong>Key Features:</strong></h6>
+                                <ul>
+                                    <li>✅ Markup is applied at <strong>display time</strong> (client-side)</li>
+                                    <li>✅ WooCommerce base prices stay unchanged</li>
+                                    <li>✅ Google Shopping sees correct prices</li>
+                                    <li>✅ Admin orders show base prices</li>
+                                    <li>✅ You can still run sales on top of display prices</li>
+                                </ul>
+                                
+                                <div class="alert alert-warning mt-3">
+                                    <strong>⚠️ Important:</strong> The markup multiplier is calculated as:<br>
+                                    <code>display_price = base_price × (1 + markup%)</code><br>
+                                    So 30% markup means multiplying by 1.30
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ROLE TIERS TAB -->
+            <div class="tab-pane fade" id="role-tiers" role="tabpanel">
+                <div class="card pricing-card">
+                    <div class="card-header">
+                        <h5 class="mb-0">👥 User Role Markup Tiers</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-hover role-tiers-table mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width: 30%;">Role Name</th>
+                                    <th style="width: 20%;">Markup %</th>
+                                    <th style="width: 15%;">Status</th>
+                                    <th style="width: 35%;">Notes</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($role_markups as $slug => $data): ?>
+                                <tr class="<?php echo ($slug === 'customer') ? 'default-row' : ''; ?>">
+                                    <td class="role-name">
+                                        <?php echo esc_html($data['name'] ?? ucfirst($slug)); ?>
+                                        <?php if ($slug === 'customer'): ?>
+                                            <span class="badge bg-secondary ms-2">Default</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <span class="markup-value" data-value="<?php echo esc_attr($data['markup'] ?? $default_markup); ?>" data-role="<?php echo esc_attr($slug); ?>">
+                                            <?php echo esc_html($data['markup'] ?? $default_markup); ?>%
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <div class="form-check form-switch mb-0">
+                                            <input class="form-check-input role-markup-toggle" type="checkbox" data-role="<?php echo esc_attr($slug); ?>" <?php checked($data['enabled'] ?? false); ?>>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <small class="text-muted">
+                                            <?php if ($slug === 'customer'): ?>
+                                                Default tier for all new customers
+                                            <?php elseif ($slug === 'subscriber'): ?>
+                                                Subscribed newsletter users
+                                            <?php elseif ($slug === 'wholesale_customer'): ?>
+                                                Wholesale/volume buyers
+                                            <?php else: ?>
+                                                Role: <?php echo esc_html($slug); ?>
+                                            <?php endif; ?>
+                                        </small>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="card-footer">
+                        <small class="text-muted">
+                            💡 Click on a markup value to edit inline. Changes save automatically.
+                        </small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CUSTOMER PRICING TAB -->
+            <div class="tab-pane fade" id="customer-pricing" role="tabpanel">
+                <div class="row">
+                    <div class="col-md-5">
+                        <!-- Search & Add Customer -->
+                        <div class="card pricing-card mb-3">
+                            <div class="card-header">
+                                <h5 class="mb-0">🔍 Search & Add Customer</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <input type="text" id="customerSearch" class="form-control" placeholder="Search by name or email...">
+                                    <div id="customerSearchResults" class="list-group" style="display: none; max-height: 200px; overflow-y: auto;"></div>
+                                </div>
+                                
+                                <div id="selectedCustomer" class="border rounded p-3" style="display: none;">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <strong id="selectedCustomerName"></strong>
+                                            <input type="hidden" id="selectedCustomerId">
+                                        </div>
+                                        <button class="btn btn-sm btn-outline-danger" onclick="clearCustomerSelection()">✕</button>
+                                    </div>
+                                </div>
+                                
+                                <div id="customerEditForm" class="mt-3" style="display: none;">
+                                    <div class="mb-2">
+                                        <label class="form-label small">Markup %</label>
+                                        <input type="number" id="customerMarkup" class="form-control" min="0" max="500" step="1" value="30">
+                                    </div>
+                                    <div class="mb-2">
+                                        <label class="form-label small">Tier Label</label>
+                                        <select id="customerTier" class="form-select">
+                                            <option value="none">None</option>
+                                            <option value="gold">Gold</option>
+                                            <option value="silver">Silver</option>
+                                            <option value="bronze">Bronze</option>
+                                            <option value="vip">VIP</option>
+                                        </select>
+                                    </div>
+                                    <button class="btn btn-success w-100" id="saveCustomerMarkup">💾 Save Customer Markup</button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Import Customers -->
+                        <div class="card pricing-card">
+                            <div class="card-header">
+                                <h5 class="mb-0">📥 Import from CSV</h5>
+                            </div>
+                            <div class="card-body">
+                                <p class="text-muted small">CSV format: <code>email,markup%,tier_label</code></p>
+                                <form id="importCustomersForm" enctype="multipart/form-data">
+                                    <?php wp_nonce_field('amrod_sync_nonce'); ?>
+                                    <input type="hidden" name="action" value="woosync_import_customers">
+                                    <div class="mb-2">
+                                        <input type="file" name="import_file" class="form-control" accept=".csv">
+                                    </div>
+                                    <button type="submit" class="btn btn-outline-primary w-100">📥 Import Customers</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-7">
+                        <!-- Customer List with Custom Pricing -->
+                        <div class="card pricing-card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">👤 Customers with Custom Pricing</h5>
+                                <button class="btn btn-sm btn-outline-primary" id="bulkActionBtn">☰ Bulk Actions</button>
+                            </div>
+                            <div class="card-body p-0">
+                                <!-- Bulk Actions Bar -->
+                                <div class="bulk-actions-bar" id="bulkActionsBar">
+                                    <div class="row align-items-end">
+                                        <div class="col-md-4">
+                                            <label class="form-label small">Selected: <span id="bulkCount">0</span></label>
+                                            <input type="hidden" id="bulkSelectedCustomers">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label small">Set Markup %</label>
+                                            <input type="number" id="bulkMarkup" class="form-control" min="0" max="500" step="1">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <button class="btn btn-primary btn-sm" id="bulkUpdateMarkup">Apply to Selected</button>
+                                            <button class="btn btn-secondary btn-sm" onclick="$('#bulkActionsBar').removeClass('active')">Cancel</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div style="max-height: 400px; overflow-y: auto;">
+                                    <?php
+                                    $user_markups = is_array($user_markups) ? $user_markups : [];
+                                    if (empty($user_markups)):
+                                    ?>
+                                    <div class="text-center text-muted py-5">
+                                        <p>No customers with custom pricing yet.</p>
+                                        <small>Search for a customer above to add custom pricing.</small>
+                                    </div>
+                                    <?php else: ?>
+                                    <table class="table table-hover mb-0">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th style="width: 5%;"><input type="checkbox" id="selectAllCustomers"></th>
+                                                <th style="width: 30%;">Customer</th>
+                                                <th style="width: 20%;">Markup</th>
+                                                <th style="width: 25%;">Tier</th>
+                                                <th style="width: 20%;">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($user_markups as $user_id => $data): 
+                                                $user = get_userdata($user_id);
+                                                if (!$user) continue;
+                                            ?>
+                                            <tr>
+                                                <td><input type="checkbox" class="customer-checkbox" value="<?php echo esc_attr($user_id); ?>"></td>
+                                                <td>
+                                                    <strong><?php echo esc_html($user->display_name); ?></strong><br>
+                                                    <small class="text-muted"><?php echo esc_html($user->user_email); ?></small>
+                                                </td>
+                                                <td><span class="badge bg-primary"><?php echo esc_html($data['markup']); ?>%</span></td>
+                                                <td>
+                                                    <?php if (!empty($data['tier'])): ?>
+                                                        <span class="tier-badge <?php echo esc_attr($data['tier']); ?>"><?php echo esc_html(ucfirst($data['tier'])); ?></span>
+                                                    <?php else: ?>
+                                                        <span class="text-muted">—</span>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td>
+                                                    <button class="btn btn-sm btn-outline-danger" onclick="removeCustomerMarkup(<?php echo esc_attr($user_id); ?>)">🗑️</button>
+                                                </td>
+                                            </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PRICE PREVIEW TAB -->
+            <div class="tab-pane fade" id="price-preview" role="tabpanel">
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="card pricing-card">
+                            <div class="card-header">
+                                <h5 class="mb-0">🔍 Preview Configuration</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label class="form-label">Select Product</label>
+                                    <div class="position-relative">
+                                        <input type="text" id="productSearch" class="form-control" placeholder="Search products...">
+                                        <div id="productSearchResults" class="list-group" style="display: none; position: absolute; z-index: 100; width: 100%; max-height: 200px; overflow-y: auto;"></div>
+                                    </div>
+                                    <select id="previewProduct" class="form-select mt-2">
+                                        <option value="">— Select a product —</option>
+                                        <?php
+                                        $products = wc_get_products(['limit' => 100, 'status' => 'publish']);
+                                        foreach ($products as $product):
+                                        ?>
+                                        <option value="<?php echo esc_attr($product->get_id()); ?>"><?php echo esc_html($product->get_name()); ?> (R<?php echo esc_html($product->get_price()); ?>)</option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label">Customer/User Role</label>
+                                    <select id="previewRole" class="form-select">
+                                        <option value="">— Default —</option>
+                                        <?php foreach ($all_roles as $slug => $name): ?>
+                                        <option value="<?php echo esc_attr($slug); ?>"><?php echo esc_html($name); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label">Or Specific Customer</label>
+                                    <select id="previewCustomer" class="form-select">
+                                        <option value="">— None —</option>
+                                        <?php
+                                        $customers = get_users(['role' => 'customer', 'number' => 50]);
+                                        foreach ($customers as $customer):
+                                        ?>
+                                        <option value="<?php echo esc_attr($customer->ID); ?>"><?php echo esc_html($customer->display_name); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-8">
+                        <div class="card pricing-card">
+                            <div class="card-header">
+                                <h5 class="mb-0">💰 Price Preview</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="pricePreviewResult" class="price-preview-box">
+                                    <div class="text-center text-muted py-5">
+                                        <div style="font-size: 48px; margin-bottom: 15px;">📊</div>
+                                        <p>Select a product to see how pricing will appear</p>
+                                        <small>Choose a customer or role to preview their specific pricing</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PRICING RULES TAB -->
+            <div class="tab-pane fade" id="pricing-rules" role="tabpanel">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card pricing-card rules-card">
+                            <div class="card-header">
+                                <h5 class="mb-0">📋 Pricing Rules & Floors</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Minimum Price Margin %</label>
+                                    <div class="input-group">
+                                        <input type="number" id="minimumMargin" class="form-control" value="<?php echo esc_attr($min_margin); ?>" min="0" max="100" step="1">
+                                        <span class="input-group-text">%</span>
+                                    </div>
+                                    <small class="text-muted">Don't let products go below supplier price + X%</small>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Maximum Discount %</label>
+                                    <div class="input-group">
+                                        <input type="number" id="maximumDiscount" class="form-control" value="<?php echo esc_attr($max_discount); ?>" min="0" max="100" step="1">
+                                        <span class="input-group-text">%</span>
+                                    </div>
+                                    <small class="text-muted">Cap how deep sales can go below display price</small>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Clearance Minimum Margin %</label>
+                                    <div class="input-group">
+                                        <input type="number" id="clearanceMinimum" class="form-control" value="<?php echo esc_attr($clearance_min); ?>" min="0" max="100" step="1">
+                                        <span class="input-group-text">%</span>
+                                    </div>
+                                    <small class="text-muted">Different rules for clearance products</small>
+                                </div>
+                                
+                                <button class="btn btn-primary w-100" id="savePricingRules">💾 Save Pricing Rules</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card pricing-card">
+                            <div class="card-header">
+                                <h5 class="mb-0">🛒 Product Base Price Override</h5>
+                            </div>
+                            <div class="card-body">
+                                <p class="text-muted">Some products you may want a fixed margin on. Set the base price override in the product edit screen.</p>
+                                
+                                <div class="alert alert-info">
+                                    <strong>How it works:</strong>
+                                    <ul class="mb-0 mt-2">
+                                        <li>Edit any product in WooCommerce</li>
+                                        <li>Find the "WooSync Pricing" meta box</li>
+                                        <li>Set a custom base price</li>
+                                        <li>This overrides the supplier price for this product</li>
+                                    </ul>
+                                </div>
+                                
+                                <div class="border rounded p-3 bg-light">
+                                    <strong>Meta Key:</strong> <code>_woosync_base_price</code><br>
+                                    <small class="text-muted">Stored per product in post meta</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    function clearCustomerSelection() {
+        jQuery('#selectedCustomer').hide();
+        jQuery('#customerEditForm').hide();
+        jQuery('#selectedCustomerId').val('');
+        jQuery('#selectedCustomerName').text('');
     }
     
-    update_option('woosync_minimum_margin', floatval($_POST['minimum_margin'] ?? 10));
-    update_option('woosync_maximum_discount', floatval($_POST['maximum_discount'] ?? 50));
-    update_option('woosync_clearance_minimum', floatval($_POST['clearance_minimum'] ?? 0));
+    function removeCustomerMarkup(userId) {
+        if (!confirm('Remove custom pricing for this customer?')) return;
+        
+        jQuery.ajax({
+            url: amrodSyncData.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'woosync_remove_customer_markup',
+                nonce: amrodSyncData.nonce,
+                customer_id: userId
+            },
+            success: function(response) {
+                if (response.success) {
+                    location.reload();
+                }
+            }
+        });
+    }
+    
+    jQuery('#bulkActionBtn').on('click', function() {
+        jQuery('#bulkActionsBar').toggleClass('active');
+    });
+    
+    jQuery('#selectAllCustomers').on('change', function() {
+        var checked = jQuery(this).prop('checked');
+        jQuery('.customer-checkbox').prop('checked', checked).trigger('change');
+    });
+    
+    jQuery('#saveDefaultMarkup').on('click', function() {
+        var markup = jQuery('#defaultMarkup').val();
+        jQuery.ajax({
+            url: amrodSyncData.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'woosync_save_default_markup',
+                nonce: amrodSyncData.nonce,
+                markup: markup
+            },
+            success: function(response) {
+                if (response.success) {
+                    alert('Default markup saved!');
+                }
+            }
+        });
+    });
+    </script>
+    <?php
+}
+
+// =============================================================================
+// TIERED PRICING CALCULATION FUNCTIONS
+// =============================================================================
+
+/**
+ * Get the markup percentage for a specific user
+ * Priority: Individual customer > User role > Default
+ */
+function woosync_get_user_markup($user_id) {
+    if (!$user_id) {
+        return get_option('woosync_default_markup', 30) / 100;
+    }
+    
+    // Check for individual customer markup first (highest priority)
+    $user_markups = get_option('woosync_user_markups', []);
+    if (isset($user_markups[$user_id])) {
+        return floatval($user_markups[$user_id]['markup']) / 100;
+    }
+    
+    // Fall back to user role markup
+    $user = get_userdata($user_id);
+    if ($user && !empty($user->roles)) {
+        $role_markup = woosync_get_user_role_markup($user->roles[0]);
+        if ($role_markup !== null) {
+            return $role_markup;
+        }
+    }
+    
+    // Default fallback
+    return get_option('woosync_default_markup', 30) / 100;
+}
+
+/**
+ * Get markup for a specific user role
+ */
+function woosync_get_user_role_markup($role) {
+    $role_markups = get_option('woosync_role_markups', []);
+    
+    if (isset($role_markups[$role]) && isset($role_markups[$role]['enabled']) && $role_markups[$role]['enabled']) {
+        return floatval($role_markups[$role]['markup']) / 100;
+    }
+    
+    return null; // Role doesn't have custom markup
+}
+
+/**
+ * Get the base price for a product (with optional override)
+ */
+function woosync_get_product_base_price($product_id, $vendor_id = 0) {
+    // Check for product-specific base price override
+    $override_price = get_post_meta($product_id, '_woosync_base_price', true);
+    if ($override_price !== '' && $override_price !== false) {
+        return floatval($override_price);
+    }
+    
+    // Otherwise get the WooCommerce regular price
+    $product = wc_get_product($product_id);
+    if ($product) {
+        return floatval($product->get_regular_price());
+    }
+    
+    return 0;
+}
+
+/**
+ * Calculate the display price with markup applied
+ */
+function woosync_calculate_display_price($product_id, $user_id = 0) {
+    $base_price = woosync_get_product_base_price($product_id);
+    $markup = woosync_get_user_markup($user_id);
+    
+    // Apply minimum margin floor if set
+    $min_margin = get_option('woosync_minimum_margin', 0) / 100;
+    $min_price = $base_price * (1 + $min_margin);
+    
+    // Calculate display price
+    $display_price = $base_price * (1 + $markup);
+    
+    // Ensure we don't go below minimum margin
+    if ($display_price < $min_price) {
+        $display_price = $min_price;
+    }
+    
+    return $display_price;
+}
+
+/**
+ * Format a price with South African Rand symbol
+ */
+function woosync_format_markup_price($price, $markup = null) {
+    if ($markup !== null) {
+        $final_price = $price * (1 + $markup);
+    } else {
+        $final_price = $price;
+    }
+    
+    return 'R' . number_format($final_price, 2);
+}
+
+// =============================================================================
+// WOOCOMMERCE PRICE HOOKS - Display Tiered Pricing on Frontend
+// =============================================================================
+
+/**
+ * Filter product price to show tiered pricing to logged-in users
+ */
+add_filter('woocommerce_product_get_price', 'woosync_filter_product_price', 10, 2);
+add_filter('woocommerce_product_get_sale_price', 'woosync_filter_product_price', 10, 2);
+function woosync_filter_product_price($price, $product) {
+    // Only apply if tiered pricing is enabled
+    if (!get_option('woosync_tiered_pricing_enabled', false)) {
+        return $price;
+    }
+    
+    // Check if user is logged in
+    if (!is_user_logged_in()) {
+        // Show markup to logged-out users if enabled
+        if (!get_option('woosync_show_prices_logged_out', false)) {
+            return $price;
+        }
+        // Use default markup for logged-out users
+        $user_id = 0;
+    } else {
+        $user_id = get_current_user_id();
+    }
+    
+    // Get the calculated display price
+    $display_price = woosync_calculate_display_price($product->get_id(), $user_id);
+    
+    return $display_price;
+}
+
+/**
+ * Filter variations price
+ */
+add_filter('woocommerce_product_variation_get_price', 'woosync_filter_variation_price', 10, 2);
+function woosync_filter_variation_price($price, $product) {
+    return woosync_filter_product_price($price, $product);
+}
+
+// =============================================================================
+// AJAX HANDLERS FOR PRICING
+// =============================================================================
+
+// Save Role Markup
+add_action('wp_ajax_woosync_save_role_markup', 'woosync_ajax_save_role_markup');
+function woosync_ajax_save_role_markup() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $role = sanitize_text_field($_POST['role']);
+    $markup = floatval($_POST['markup']);
+    
+    $role_markups = get_option('woosync_role_markups', []);
+    if (!isset($role_markups[$role])) {
+        $role_markups[$role] = [];
+    }
+    $role_markups[$role]['markup'] = $markup;
+    
+    update_option('woosync_role_markups', $role_markups);
+    wp_send_json_success(['message' => 'Role markup saved']);
+}
+
+// Toggle Role Markup
+add_action('wp_ajax_woosync_toggle_role_markup', 'woosync_ajax_toggle_role_markup');
+function woosync_ajax_toggle_role_markup() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $role = sanitize_text_field($_POST['role']);
+    $enabled = intval($_POST['enabled']);
+    
+    $role_markups = get_option('woosync_role_markups', []);
+    if (!isset($role_markups[$role])) {
+        $role_markups[$role] = [];
+    }
+    $role_markups[$role]['enabled'] = $enabled;
+    
+    update_option('woosync_role_markups', $role_markups);
+    wp_send_json_success(['message' => 'Role status updated']);
+}
+
+// Apply Blanket to All Roles
+add_action('wp_ajax_woosync_apply_blanket_to_all', 'woosync_ajax_apply_blanket_to_all');
+function woosync_ajax_apply_blanket_to_all() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $markup = floatval($_POST['markup']);
+    
+    $role_markups = get_option('woosync_role_markups', []);
+    foreach ($role_markups as $slug => &$data) {
+        $data['markup'] = $markup;
+        $data['enabled'] = true;
+    }
+    
+    update_option('woosync_role_markups', $role_markups);
+    wp_send_json_success(['message' => 'Blanket applied to all roles']);
+}
+
+// Search Customers
+add_action('wp_ajax_woosync_search_customers', 'woosync_ajax_search_customers');
+function woosync_ajax_search_customers() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $query = sanitize_text_field($_POST['query']);
+    
+    $args = [
+        'search' => "*{$query}*",
+        'search_columns' => ['display_name', 'user_email'],
+        'number' => 20,
+    ];
+    
+    $users = get_users($args);
+    $user_markups = get_option('woosync_user_markups', []);
+    
+    $results = [];
+    foreach ($users as $user) {
+        $markup = isset($user_markups[$user->ID]) ? $user_markups[$user->ID]['markup'] : 0;
+        $results[] = [
+            'id' => $user->ID,
+            'name' => $user->display_name,
+            'email' => $user->user_email,
+            'markup' => $markup,
+        ];
+    }
+    
+    wp_send_json_success(['customers' => $results]);
+}
+
+// Get Customer Markup
+add_action('wp_ajax_woosync_get_customer_markup', 'woosync_ajax_get_customer_markup');
+function woosync_ajax_get_customer_markup() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $customer_id = intval($_POST['customer_id']);
+    $user_markups = get_option('woosync_user_markups', []);
+    
+    $markup = isset($user_markups[$customer_id]) ? $user_markups[$customer_id]['markup'] : 0;
+    $tier = isset($user_markups[$customer_id]) ? $user_markups[$customer_id]['tier'] : '';
+    
+    wp_send_json_success(['markup' => $markup, 'tier' => $tier]);
+}
+
+// Save Customer Markup
+add_action('wp_ajax_woosync_save_customer_markup', 'woosync_ajax_save_customer_markup');
+function woosync_ajax_save_customer_markup() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $customer_id = intval($_POST['customer_id']);
+    $markup = floatval($_POST['markup']);
+    $tier = sanitize_text_field($_POST['tier']);
+    
+    $user_markups = get_option('woosync_user_markups', []);
+    $user_markups[$customer_id] = [
+        'markup' => $markup,
+        'tier' => $tier,
+    ];
+    
+    update_option('woosync_user_markups', $user_markups);
+    wp_send_json_success(['message' => 'Customer markup saved']);
+}
+
+// Bulk Update Customers
+add_action('wp_ajax_woosync_bulk_update_customers', 'woosync_ajax_bulk_update_customers');
+function woosync_ajax_bulk_update_customers() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $customer_ids = $_POST['customer_ids'];
+    $markup = floatval($_POST['markup']);
+    
+    if (is_string($customer_ids)) {
+        $customer_ids = json_decode($customer_ids, true);
+    }
+    
+    $user_markups = get_option('woosync_user_markups', []);
+    $updated = 0;
+    
+    foreach ($customer_ids as $id) {
+        $id = intval($id);
+        if (!isset($user_markups[$id])) {
+            $user_markups[$id] = [];
+        }
+        $user_markups[$id]['markup'] = $markup;
+        $updated++;
+    }
+    
+    update_option('woosync_user_markups', $user_markups);
+    wp_send_json_success(['updated' => $updated]);
+}
+
+// Remove Customer Markup
+add_action('wp_ajax_woosync_remove_customer_markup', 'woosync_ajax_remove_customer_markup');
+function woosync_ajax_remove_customer_markup() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $customer_id = intval($_POST['customer_id']);
+    $user_markups = get_option('woosync_user_markups', []);
+    unset($user_markups[$customer_id]);
+    
+    update_option('woosync_user_markups', $user_markups);
+    wp_send_json_success(['message' => 'Customer markup removed']);
+}
+
+// Import Customers from CSV
+add_action('wp_ajax_woosync_import_customers', 'woosync_ajax_import_customers');
+function woosync_ajax_import_customers() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    if (empty($_FILES['import_file'])) {
+        wp_send_json_error('No file uploaded');
+    }
+    
+    $file = $_FILES['import_file'];
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        wp_send_json_error('Upload error');
+    }
+    
+    $handle = fopen($file['tmp_name'], 'r');
+    if (!$handle) {
+        wp_send_json_error('Could not read file');
+    }
+    
+    $user_markups = get_option('woosync_user_markups', []);
+    $imported = 0;
+    
+    // Skip header row
+    fgetcsv($handle);
+    
+    while (($data = fgetcsv($handle)) !== false) {
+        if (count($data) < 2) continue;
+        
+        $email = sanitize_email($data[0]);
+        $markup = floatval($data[1]);
+        $tier = isset($data[2]) ? sanitize_text_field($data[2]) : '';
+        
+        $user = get_user_by('email', $email);
+        if ($user) {
+            $user_markups[$user->ID] = [
+                'markup' => $markup,
+                'tier' => $tier,
+            ];
+            $imported++;
+        }
+    }
+    
+    fclose($handle);
+    update_option('woosync_user_markups', $user_markups);
+    
+    wp_send_json_success(['imported' => $imported]);
+}
+
+// Calculate Price (for preview)
+add_action('wp_ajax_woosync_calculate_price', 'woosync_ajax_calculate_price');
+function woosync_ajax_calculate_price() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $product_id = intval($_POST['product_id']);
+    $customer_id = isset($_POST['customer_id']) && !empty($_POST['customer_id']) ? intval($_POST['customer_id']) : 0;
+    $role = sanitize_text_field($_POST['role'] ?? '');
+    
+    $product = wc_get_product($product_id);
+    if (!$product) {
+        wp_send_json_error('Product not found');
+    }
+    
+    $supplier_price = floatval($product->get_regular_price());
+    $base_price = woosync_get_product_base_price($product_id);
+    
+    // Determine markup
+    $markup_percent = get_option('woosync_default_markup', 30);
+    
+    if ($customer_id > 0) {
+        $user_markups = get_option('woosync_user_markups', []);
+        if (isset($user_markups[$customer_id])) {
+            $markup_percent = $user_markups[$customer_id]['markup'];
+        }
+    } elseif (!empty($role)) {
+        $role_markups = get_option('woosync_role_markups', []);
+        if (isset($role_markups[$role]) && isset($role_markups[$role]['enabled']) && $role_markups[$role]['enabled']) {
+            $markup_percent = $role_markups[$role]['markup'];
+        }
+    }
+    
+    $markup = $markup_percent / 100;
+    $display_price = $base_price * (1 + $markup);
+    $profit = $display_price - $base_price;
+    $margin_percent = $base_price > 0 ? round(($profit / $display_price) * 100, 1) : 0;
+    
+    wp_send_json_success([
+        'supplier_price' => $supplier_price,
+        'base_price' => $base_price,
+        'display_price' => $display_price,
+        'markup_percent' => $markup_percent,
+        'profit' => $profit,
+        'margin_percent' => $margin_percent . '%',
+    ]);
+}
+
+// Toggle Tiered Pricing
+add_action('wp_ajax_woosync_toggle_tiered_pricing', 'woosync_ajax_toggle_tiered_pricing');
+function woosync_ajax_toggle_tiered_pricing() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $enabled = intval($_POST['enabled']);
+    update_option('woosync_tiered_pricing_enabled', $enabled);
+    
+    wp_send_json_success(['message' => 'Tiered pricing ' . ($enabled ? 'enabled' : 'disabled')]);
+}
+
+// Save Pricing Rules
+add_action('wp_ajax_woosync_save_pricing_rules', 'woosync_ajax_save_pricing_rules');
+function woosync_ajax_save_pricing_rules() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $rules = $_POST['rules'];
+    
+    update_option('woosync_minimum_margin', floatval($rules['minimum_margin']));
+    update_option('woosync_maximum_discount', floatval($rules['maximum_discount']));
+    update_option('woosync_clearance_minimum', floatval($rules['clearance_minimum']));
     
     wp_send_json_success(['message' => 'Pricing rules saved']);
 }
 
-add_action('wp_ajax_woosync_apply_markup_to_all', 'woosync_ajax_apply_markup_to_all');
-function woosync_ajax_apply_markup_to_all() {
-    check_ajax_referer('woosync_pricing', 'nonce');
+// Save Default Markup
+add_action('wp_ajax_woosync_save_default_markup', 'woosync_ajax_save_default_markup');
+function woosync_ajax_save_default_markup() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
-    }
+    $markup = floatval($_POST['markup']);
+    update_option('woosync_default_markup', $markup);
     
-    $markup = floatval($_POST['markup'] ?? 30);
-    $user_markups = get_option('woosync_user_markups', []);
-    
-    // Apply to all existing customers
-    foreach ($user_markups as $user_id => &$data) {
-        $data['markup'] = $markup;
-    }
-    
-    update_option('woosync_user_markups', $user_markups);
-    
-    wp_send_json_success(['count' => count($user_markups)]);
+    wp_send_json_success(['message' => 'Default markup saved']);
 }
 
-// ===== AJAX HANDLERS FOR TIER SETTINGS =====
-add_action('wp_ajax_woosync_refresh_tier_status', 'woosync_ajax_refresh_tier_status');
-function woosync_ajax_refresh_tier_status() {
-    check_ajax_referer('woosync_tier', 'nonce');
+// Search Products for Preview
+add_action('wp_ajax_woosync_search_products_for_preview', 'woosync_ajax_search_products_for_preview');
+function woosync_ajax_search_products_for_preview() {
+    check_ajax_referer('amrod_sync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
     
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
-    }
+    $query = sanitize_text_field($_POST['query']);
     
-    $active_vendor = woosync_get_active_vendor();
-    if (!$active_vendor) {
-        wp_send_json_error('No active vendor');
-    }
-    
-    // In a real implementation, this would call the vendor API to get tier status
-    // For now, we return the stored tier data
-    $tier_data = [
-        'tier' => $active_vendor['tier'] ?? 'Standard',
-        'status' => 'Active',
-        'since' => $active_vendor['tier_since'] ?? date('Y-m-d'),
-        'expiry' => $active_vendor['tier_expiry'] ?? 'N/A',
-        'notes' => $active_vendor['tier_notes'] ?? '',
-        'savings' => [
-            'total' => 0,
-            'products' => 0
-        ]
-    ];
-    
-    wp_send_json_success($tier_data);
-}
-
-add_action('wp_ajax_woosync_save_manual_tier', 'woosync_ajax_save_manual_tier');
-function woosync_ajax_save_manual_tier() {
-    check_ajax_referer('woosync_tier', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
-    }
-    
-    $tier = sanitize_text_field($_POST['tier'] ?? '');
-    $active_vendor = woosync_get_active_vendor();
-    
-    if ($active_vendor) {
-        $active_vendor['tier'] = $tier;
-        woosync_save_vendor($active_vendor);
-    }
-    
-    wp_send_json_success(['message' => 'Manual tier saved']);
-}
-
-add_action('wp_ajax_woosync_get_tier_benefits', 'woosync_ajax_get_tier_benefits');
-function woosync_ajax_get_tier_benefits() {
-    check_ajax_referer('woosync_tier', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
-    }
-    
-    $active_vendor = woosync_get_active_vendor();
-    $tier = $active_vendor['tier'] ?? 'Standard';
-    
-    $benefits = [
-        'Standard' => [
-            'Access to standard pricing',
-            'Basic product catalog',
-            'Email support'
-        ],
-        'Bronze' => [
-            'Up to 10% better pricing',
-            'Priority product access',
-            'Email support',
-            'Monthly newsletter'
-        ],
-        'Silver' => [
-            'Up to 20% better pricing',
-            'Early access to new products',
-            'Priority email support',
-            'Dedicated account manager',
-            'Quarterly business review'
-        ],
-        'Gold' => [
-            'Up to 30% better pricing',
-            'First access to new products',
-            'Phone & email support',
-            'Dedicated account manager',
-            'Monthly business review',
-            'Custom branding options',
-            'Volume discounts'
-        ],
-        'Platinum' => [
-            'Up to 50% better pricing',
-            'Exclusive product access',
-            '24/7 priority support',
-            'Dedicated account team',
-            'Weekly business reviews',
-            'Custom solutions',
-            'Maximum volume discounts',
-            'White-label options'
-        ]
-    ];
-    
-    wp_send_json_success([
-        'tier' => $tier,
-        'status' => 'Active',
-        'since' => $active_vendor['tier_since'] ?? 'N/A',
-        'benefits' => $benefits[$tier] ?? $benefits['Standard']
+    $products = wc_get_products([
+        'search' => $query,
+        'limit' => 20,
+        'status' => 'publish',
     ]);
-}
-
-add_action('wp_ajax_woosync_get_tier_savings', 'woosync_ajax_get_tier_savings');
-function woosync_ajax_get_tier_savings() {
-    check_ajax_referer('woosync_tier', 'nonce');
     
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error('Insufficient permissions');
+    $results = [];
+    foreach ($products as $product) {
+        $results[] = [
+            'id' => $product->get_id(),
+            'name' => $product->get_name(),
+            'sku' => $product->get_sku(),
+            'price' => $product->get_price(),
+        ];
     }
     
-    $active_vendor = woosync_get_active_vendor();
-    $savings = woosync_calculate_tier_savings($active_vendor);
-    
-    $savings['tier'] = $active_vendor['tier'] ?? 'Standard';
-    
-    wp_send_json_success($savings);
+    wp_send_json_success(['products' => $results]);
 }
 
-// ===== PRODUCT META BOX FOR BASE PRICE OVERRIDE =====
+// =============================================================================
+// PRODUCT META BOX - Base Price Override
+// =============================================================================
+
 add_action('add_meta_boxes', 'woosync_add_pricing_meta_box');
 function woosync_add_pricing_meta_box() {
     add_meta_box(
-        'woosync_pricing_box',
+        'woosync_pricing_meta_box',
         'WooSync Pricing',
         'woosync_render_pricing_meta_box',
         'product',
@@ -5372,30 +4278,36 @@ function woosync_add_pricing_meta_box() {
 }
 
 function woosync_render_pricing_meta_box($post) {
+    wp_nonce_field('woosync_pricing_meta_box', 'woosync_pricing_nonce');
+    
     $base_price = get_post_meta($post->ID, '_woosync_base_price', true);
-    $vendor_id = get_post_meta($post->ID, '_woosync_vendor_id', true);
     ?>
-    <div class="woosync-pricing-meta-box">
-        <p>
-            <label for="woosync_base_price">Base Price (Supplier Cost)</label>
-            <input type="number" step="0.01" id="woosync_base_price" name="woosync_base_price" 
-                   class="form-control" value="<?php echo esc_attr($base_price); ?>" 
-                   placeholder="Leave empty to use WooCommerce price">
-        </p>
-        <?php if ($vendor_id): ?>
-        <p class="small text-muted">
-            Vendor: <?php echo esc_html($vendor_id); ?>
-        </p>
-        <?php endif; ?>
+    <label class="form-label">Base Price Override</label>
+    <div class="input-group mb-2">
+        <span class="input-group-text">R</span>
+        <input type="number" name="woosync_base_price" class="form-control" value="<?php echo esc_attr($base_price); ?>" step="0.01" min="0">
     </div>
+    <small class="text-muted">Leave empty to use supplier price</small>
     <?php
 }
 
-add_action('save_post_product', 'woosync_save_pricing_meta_box');
-function woosync_save_pricing_meta_box($post_id) {
+add_action('save_post', 'woosync_save_pricing_meta_box', 10, 2);
+function woosync_save_pricing_meta_box($post_id, $post) {
+    if (!isset($_POST['woosync_pricing_nonce']) || !wp_verify_nonce($_POST['woosync_pricing_nonce'], 'woosync_pricing_meta_box')) {
+        return;
+    }
+    
+    if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
+        return;
+    }
+    
+    if (!current_user_can('edit_post', $post_id)) {
+        return;
+    }
+    
     if (isset($_POST['woosync_base_price'])) {
         $base_price = $_POST['woosync_base_price'];
-        if ($base_price === '') {
+        if ($base_price === '' || $base_price === null) {
             delete_post_meta($post_id, '_woosync_base_price');
         } else {
             update_post_meta($post_id, '_woosync_base_price', floatval($base_price));
