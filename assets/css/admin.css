@@ -1340,3 +1340,81 @@
         grid-template-columns: 1fr;
     }
 }
+
+/* ============================================================
+   INLINE STYLE REPLACEMENTS - Utility Classes
+   ============================================================ */
+
+/* Hidden element utility */
+.woosync-hidden {
+    display: none !important;
+}
+
+/* Scrollable containers with different max-heights */
+.woosync-scroll-200 {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.woosync-scroll-300 {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.woosync-scroll-400 {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.woosync-scroll-500 {
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+/* Extra large icon sizing */
+.woosync-icon-xl {
+    font-size: 48px;
+}
+
+.woosync-icon-xl-sm {
+    font-size: 48px;
+    margin-bottom: 15px;
+}
+
+/* Surface background */
+.woosync-bg-surface {
+    background: var(--ws-surface);
+}
+
+/* Dropdown search positioning */
+.woosync-dropdown-search {
+    display: none;
+    position: absolute;
+    z-index: 100;
+    width: 100%;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+/* Combined scroll and hidden */
+.woosync-scroll-hidden-200 {
+    max-height: 200px;
+    overflow-y: auto;
+    display: none;
+}
+
+/* Table column widths (via BS5 w-* utilities preferred, these for compatibility) */
+.woosync-w-5 { width: 5%; }
+.woosync-w-10 { width: 10%; }
+.woosync-w-15 { width: 15%; }
+.woosync-w-20 { width: 20%; }
+.woosync-w-25 { width: 25%; }
+.woosync-w-30 { width: 30%; }
+.woosync-w-35 { width: 35%; }
+.woosync-w-40 { width: 40%; }
+.woosync-w-50 { width: 50%; }
+
+/* Progress bar height override */
+.woosync-progress-height {
+    height: 25px;
+}

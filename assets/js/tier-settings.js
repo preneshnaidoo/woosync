@@ -1,259 +1,137 @@
 /**
- * WooSync Supplier Tier Settings - Tier card, refresh, and savings display
+ * WooSync v3.3 - Tier Settings JavaScript
+ * Handles tier settings on Settings page and tier savings on Sync Log page
  */
-(function($) {
-    'use strict';
 
-    var TierSettings = {
-        initialized: false,
-
-        init: function() {
-            if (this.initialized) return;
-            this.bindEvents();
-            this.initialized = true;
-        },
-
-        bindEvents: function() {
-            var self = this;
-
-            // Refresh tier status
-            $(document).on('click', '#refreshTierBtn', function(e) {
-                e.preventDefault();
-                self.refreshTierStatus();
-            });
-
-            // Upgrade tier button
-            $(document).on('click', '#upgradeTierBtn', function(e) {
-                e.preventDefault();
-                self.upgradeTier();
-            });
-
-            // Manual tier override
-            $(document).on('change', '#manualTierOverride', function() {
-                self.saveManualTier();
-            });
-
-            // Tier product preview toggle
-            $(document).on('click', '.tier-preview-toggle', function(e) {
-                e.preventDefault();
-                var productId = $(this).data('product');
-                self.toggleProductPreview(productId);
-            });
-
-            // View tier benefits
-            $(document).on('click', '#viewTierBenefitsBtn', function(e) {
-                e.preventDefault();
-                self.showTierBenefits();
-            });
-        },
-
-        refreshTierStatus: function() {
-            var btn = $('#refreshTierBtn');
-            btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-2"></span>Refreshing...');
-
-            $.ajax({
-                url: woosyncTier.ajaxUrl,
-                type: 'POST',
-                data: {
-                    action: 'woosync_refresh_tier_status',
-                    nonce: woosyncTier.nonce
-                },
-                success: function(response) {
-                    if (response.success) {
-                        self.updateTierCard(response.data);
-                        woosyncTier.showNotice('Tier status refreshed', 'success');
-                    } else {
-                        woosyncTier.showNotice('Failed to refresh tier status', 'error');
-                    }
-                    btn.prop('disabled', false).html('🔄 Refresh Tier Status');
-                },
-                error: function() {
-                    woosyncTier.showNotice('Network error', 'error');
-                    btn.prop('disabled', false).html('🔄 Refresh Tier Status');
+jQuery(function($) {
+    // Save Tier Settings Button
+    $('#saveTierSettingsBtn').on('click', function() {
+        const btn = $(this);
+        btn.prop('disabled', true).html('⏳ Saving...');
+        
+        $.ajax({
+            url: amrodSyncData.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'amrod_save_tier_settings',
+                vendor_id: 'amrod',
+                tier: $('#tierSelect').val(),
+                tier_notes: $('#tierNotes').val(),
+                tier_pricing_endpoint: $('#tierPricingEndpoint').val(),
+                markup_percent: $('#markupPercent').val(),
+                nonce: amrodSyncData.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    alert('✅ Tier settings saved successfully!');
+                } else {
+                    alert('❌ Failed to save tier settings: ' + response.data);
                 }
-            });
-        },
-
-        updateTierCard: function(data) {
-            var tier = data.tier || 'Standard';
-            var tierClass = this.getTierClass(tier);
-            var tierIcon = this.getTierIcon(tier);
-
-            $('#tierName').text(tier);
-            $('#tierBadge').removeClass('tier-gold tier-silver tier-bronze tier-platinum tier-standard')
-                         .addClass(tierClass);
-            $('#tierStatus').text(data.status || 'Active');
-            $('#tierSince').text(data.since || 'N/A');
-            $('#tierExpiry').text(data.expiry || 'N/A');
-            $('#tierNotes').text(data.notes || 'No notes');
-
-            // Update savings display
-            if (data.savings) {
-                $('#tierSavingsTotal').text('R' + data.savings.total.toLocaleString());
-                $('#tierSavingsProducts').text(data.savings.products + ' products');
+            },
+            error: function() {
+                alert('❌ Error saving tier settings');
+            },
+            complete: function() {
+                btn.prop('disabled', false).html('💾 Save Tier Settings');
             }
-        },
-
-        getTierClass: function(tier) {
-            var classes = {
-                'Gold': 'tier-gold',
-                'Silver': 'tier-silver',
-                'Bronze': 'tier-bronze',
-                'Platinum': 'tier-platinum',
-                'Standard': 'tier-standard'
-            };
-            return classes[tier] || 'tier-standard';
-        },
-
-        getTierIcon: function(tier) {
-            var icons = {
-                'Gold': '🏆',
-                'Silver': '🥈',
-                'Bronze': '🥉',
-                'Platinum': '💎',
-                'Standard': '📦'
-            };
-            return icons[tier] || '📦';
-        },
-
-        upgradeTier: function() {
-            // Open external upgrade link
-            var vendor = woosyncTier.vendorName || 'Amrod';
-            var upgradeUrl = 'https://' + vendor.toLowerCase() + '.co.za/tier-upgrade';
-            window.open(upgradeUrl, '_blank');
-        },
-
-        saveManualTier: function() {
-            var tier = $('#manualTierOverride').val();
-
-            $.ajax({
-                url: woosyncTier.ajaxUrl,
-                type: 'POST',
-                data: {
-                    action: 'woosync_save_manual_tier',
-                    nonce: woosyncTier.nonce,
-                    tier: tier
-                },
-                success: function(response) {
-                    if (response.success) {
-                        woosyncTier.showNotice('Manual tier override saved', 'success');
-                        self.refreshTierStatus();
-                    } else {
-                        woosyncTier.showNotice('Failed to save tier', 'error');
-                    }
-                }
-            });
-        },
-
-        toggleProductPreview: function(productId) {
-            var panel = $('#tierPreviewPanel_' + productId);
-            if (panel.length) {
-                panel.toggle();
-            }
-        },
-
-        showTierBenefits: function() {
-            $.ajax({
-                url: woosyncTier.ajaxUrl,
-                type: 'POST',
-                data: {
-                    action: 'woosync_get_tier_benefits',
-                    nonce: woosyncTier.nonce
-                },
-                success: function(response) {
-                    if (response.success) {
-                        woosyncTier.renderTierBenefits(response.data);
-                        $('#tierBenefitsModal').modal('show');
-                    } else {
-                        woosyncTier.showNotice('Failed to load benefits', 'error');
-                    }
-                }
-            });
-        },
-
-        loadTierSavings: function() {
-            $.ajax({
-                url: woosyncTier.ajaxUrl,
-                type: 'POST',
-                data: {
-                    action: 'woosync_get_tier_savings',
-                    nonce: woosyncTier.nonce
-                },
-                success: function(response) {
-                    if (response.success) {
-                        woosyncTier.renderTierSavings(response.data);
-                    }
-                }
-            });
-        }
-    };
-
-    // Helper functions exposed globally
-    window.woosyncTier = {
-        ajaxUrl: '',
-        nonce: '',
-        vendorName: '',
-        showNotice: function(message, type) {
-            var alertClass = type === 'success' ? 'alert-success' : (type === 'error' ? 'alert-danger' : 'alert-warning');
-            var html = '<div class="alert ' + alertClass + ' alert-dismissible fade show" role="alert">' +
-                       message +
-                       '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>' +
-                       '</div>';
-            $('#tierNotice').html(html);
-            setTimeout(function() {
-                $('#tierNotice').html('');
-            }, 5000);
-        },
-        renderTierSavings: function(data) {
-            var html = '<div class="tier-savings-widget">' +
-                       '<div class="savings-total">' +
-                       '<div class="savings-amount">R' + data.total_savings.toLocaleString() + '</div>' +
-                       '<div class="savings-label">Total Savings</div>' +
-                       '</div>' +
-                       '<div class="savings-detail">' +
-                       'Your ' + data.tier + ' tier saves you R' + data.total_savings.toLocaleString() + ' across ' + data.products + ' products' +
-                       '</div>' +
-                       '</div>';
-            $('#tierSavingsWidget').html(html);
-
-            // Build benefits table
-            var tableHtml = '<table class="table table-sm"><thead><tr><th>Product</th><th>Standard Price</th><th>Your Tier Price</th><th>Savings/Unit</th><th>Total Savings</th></tr></thead><tbody>';
-            $.each(data.products_detail, function(i, product) {
-                tableHtml += '<tr>';
-                tableHtml += '<td>' + product.name + '</td>';
-                tableHtml += '<td>R' + product.standard_price + '</td>';
-                tableHtml += '<td>R' + product.tier_price + '</td>';
-                tableHtml += '<td class="text-success">R' + product.savings_per_unit + '</td>';
-                tableHtml += '<td class="text-success">R' + product.total_savings + '</td>';
-                tableHtml += '</tr>';
-            });
-            tableHtml += '</tbody></table>';
-            $('#tierSavingsTable').html(tableHtml);
-        },
-        renderTierBenefits: function(data) {
-            var html = '<div class="tier-benefits-content">' +
-                       '<h5>' + data.tier + ' Tier Benefits</h5>' +
-                       '<ul class="list-group">';
-            $.each(data.benefits, function(i, benefit) {
-                html += '<li class="list-group-item">' + benefit + '</li>';
-            });
-            html += '</ul>';
-            html += '<div class="mt-3 text-muted">';
-            html += '<p><strong>Your pricing level:</strong> ' + data.tier + '</p>';
-            html += '<p><strong>Status:</strong> ' + data.status + '</p>';
-            html += '<p><strong>Active since:</strong> ' + data.since + '</p>';
-            html += '</div>';
-            $('#tierBenefitsContent').html(html);
-        }
-    };
-
-    // Initialize on document ready
-    $(document).ready(function() {
-        TierSettings.init();
-        TierSettings.loadTierSavings();
+        });
     });
 
-    // Expose globally
-    window.TierSettings = TierSettings;
+    // Refresh Tier Status Button
+    $('#refreshTierStatusBtn').on('click', function() {
+        const btn = $(this);
+        btn.prop('disabled', true).html('⏳ Refreshing...');
+        
+        $.ajax({
+            url: amrodSyncData.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'amrod_refresh_tier_status',
+                vendor_id: 'amrod',
+                nonce: amrodSyncData.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    alert('✅ Tier status refreshed! Your tier: ' + response.data.tier);
+                    location.reload();
+                } else {
+                    alert('❌ Failed to refresh tier: ' + response.data);
+                }
+            },
+            error: function() {
+                alert('❌ Error refreshing tier status');
+            },
+            complete: function() {
+                btn.prop('disabled', false).html('🔄 Refresh from API');
+            }
+        });
+    });
 
-})(jQuery);
+    // Refresh Tier Savings Button (on Sync Log page)
+    $('#refreshSavingsBtn').on('click', function() {
+        const btn = $(this);
+        btn.prop('disabled', true).html('⏳ Loading...');
+        
+        $('#tierSavingsSummary').html('<div class="alert alert-info"><span class="spinner-border spinner-border-sm me-2"></span> Loading tier savings data...</div>');
+        $('#tierSavingsBody').html('<tr><td colspan="5" class="text-center py-4"><span class="spinner-border spinner-border-sm"></span></td></tr>');
+        
+        $.ajax({
+            url: amrodSyncData.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'amrod_get_tier_savings',
+                nonce: amrodSyncData.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    displayTierSavings(response.data);
+                } else {
+                    $('#tierSavingsSummary').html('<div class="alert alert-danger">❌ ' + response.data + '</div>');
+                    $('#tierSavingsBody').html('<tr><td colspan="5" class="text-center text-danger py-4">Failed to load savings</td></tr>');
+                }
+            },
+            error: function() {
+                $('#tierSavingsSummary').html('<div class="alert alert-danger">❌ Error loading tier savings</div>');
+                $('#tierSavingsBody').html('<tr><td colspan="5" class="text-center text-danger py-4">Error loading savings</td></tr>');
+            },
+            complete: function() {
+                btn.prop('disabled', false).html('🔄 Refresh Savings');
+            }
+        });
+    });
+
+    function displayTierSavings(data) {
+        if (!data.products || data.products.length === 0) {
+            $('#tierSavingsSummary').html('<div class="alert alert-info">No tier pricing savings found for ' + data.tier + ' tier.</div>');
+            $('#tierSavingsBody').html('<tr><td colspan="5" class="text-center text-muted py-4">No savings data available</td></tr>');
+            return;
+        }
+        
+        // Summary
+        const totalSavings = data.total_savings || 0;
+        const productCount = data.product_count || 0;
+        $('#tierSavingsSummary').html(
+            '<div class="alert alert-success">' +
+            '<strong>💰 Your ' + data.tier + ' tier saves you R' + totalSavings.toFixed(2) + ' across ' + productCount + ' products!</strong><br>' +
+            '<small>These savings are based on tier-specific pricing from your supplier.</small>' +
+            '</div>'
+        );
+        
+        // Table
+        let html = '';
+        data.products.forEach(function(product) {
+            html += '<tr>';
+            html += '<td><strong>' + product.name + '</strong><br><small class="text-muted">SKU: ' + product.code + '</small></td>';
+            html += '<td><s>R' + product.standard_price.toFixed(2) + '</s></td>';
+            html += '<td class="text-success fw-bold">R' + product.tier_price.toFixed(2) + '</td>';
+            html += '<td class="text-warning fw-bold">-R' + product.savings_per_unit.toFixed(2) + '</td>';
+            html += '<td><span class="badge bg-danger">-' + product.savings_percent + '%</span></td>';
+            html += '</tr>';
+        });
+        
+        $('#tierSavingsBody').html(html);
+    }
+
+    // Initialize tooltips
+    $('[data-bs-toggle="tooltip"]').tooltip();
+});

@@ -89,7 +89,7 @@ Implemented dynamic credential form that shows DIFFERENT fields based on which v
 - Version bump to 3.4.1
 
 **Files Changed:**
-- `woosync.php` — added credential schemas, updated AJAX handlers, updated localize_script
+- `amrod-sync.php` — added credential schemas, updated AJAX handlers, updated localize_script
 - `assets/js/wizard.js` — dynamic field rendering, vendor-specific support panels
 - `assets/css/admin.css` — credential field styles, support panel variations
 - `CHANGELOG.md` — updated with v3.4.1 changelog

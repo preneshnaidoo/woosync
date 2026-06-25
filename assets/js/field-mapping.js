@@ -1,242 +1,191 @@
 /**
- * WooSync Field Mapping JavaScript
+ * Amrod Sync v3.0 - Field Mapping Manager
+ * Enhanced with marketing field detection and tabbed interface support.
  */
-(function($) {
-    'use strict';
 
-    const FieldMapping = {
-        detectedFields: [],
-        sampleData: null,
-        
-        init: function() {
-            this.bindEvents();
-            this.initApiFieldsList();
-        },
-        
-        bindEvents: function() {
-            // Auto-detect button
-            $('#autoDetectMappingBtn').on('click', $.proxy(this.autoDetectFields, this));
-            
-            // Test mapping button
-            $('#testMappingBtn').on('click', $.proxy(this.testMapping, this));
-            
-            // Reset mapping button
-            $('#resetMappingBtn').on('click', $.proxy(this.resetMapping, this));
-            
-            // API field input changes
-            $(document).on('change', '.api-field-input', $.proxy(this.updateConfidence, this));
-        },
-        
-        initApiFieldsList: function() {
-            // Pre-populate datalist with template fields
-            const templates = window.woosyncVendorTemplates || {};
-            const activeVendor = window.woosyncActiveVendor || 'amrod';
-            const template = templates[activeVendor] || templates.amrod;
-            
-            if (template && template.detected_fields) {
-                template.detected_fields.forEach(function(field) {
-                    $('#api-fields-list').append(
-                        $('<option>').attr('value', field)
-                    );
-                });
-            }
-        },
-        
-        autoDetectFields: function() {
-            const $btn = $('#autoDetectMappingBtn');
-            $btn.prop('disabled', true).html('⏳ Detecting...');
-            
-            const data = {
-                action: 'woosync_auto_detect_fields',
-                nonce: woosyncData.nonce
-            };
-            
-            $.post(woosyncData.ajaxUrl, data)
-                .done(function(response) {
-                    if (response.success) {
-                        FieldMapping.handleAutoDetectSuccess(response.data);
-                    } else {
-                        alert('Auto-detect failed: ' + (response.data || 'Unknown error'));
-                    }
-                })
-                .fail(function() {
-                    alert('Auto-detect failed: Network error');
-                })
-                .always(function() {
-                    $btn.prop('disabled', false).html('🔍 Auto-Detect from API');
-                });
-        },
-        
-        handleAutoDetectSuccess: function(data) {
-            this.detectedFields = data.api_fields || [];
-            this.sampleData = data.sample || {};
-            const mappings = data.mappings || {};
-            
-            // Update table rows with detected mappings
-            $('#mappingTable tbody tr').each(function() {
-                const $row = $(this);
-                const wcKey = $row.data('wc-field');
-                const mapping = mappings[wcKey];
-                
-                if (mapping) {
-                    $row.find('.api-field-input').val(mapping.api_field);
-                    $row.find('.badge').removeClass('bg-success bg-warning bg-danger bg-secondary')
-                        .addClass('bg-' + (mapping.confidence === 'high' ? 'success' : mapping.confidence === 'medium' ? 'warning' : 'danger'))
-                        .html(FieldMapping.getConfidenceIcon(mapping.confidence) + ' ' + FieldMapping.getConfidenceLabel(mapping.confidence));
-                    
-                    // Update sample value
-                    const sampleValue = FieldMapping.getSampleValue(FieldMapping.sampleData, mapping.api_field);
-                    $row.find('.sample-value').text(sampleValue);
-                }
-            });
-            
-            // Show success message
-            FieldMapping.showMessage('Auto-detection complete! Review the mappings and save.', 'success');
-        },
-        
-        getConfidenceIcon: function(confidence) {
-            const icons = { high: '✅', medium: '⚠️', low: '❌' };
-            return icons[confidence] || '❌';
-        },
-        
-        getConfidenceLabel: function(confidence) {
-            const labels = { high: 'High', medium: 'Medium', low: 'Low' };
-            return labels[confidence] || 'Low';
-        },
-        
-        getSampleValue: function(sample, apiField) {
-            if (!sample || !apiField) return '-';
-            
-            const keys = apiField.split('.');
-            let value = sample;
-            
-            for (const key of keys) {
-                if (value && typeof value === 'object' && key in value) {
-                    value = value[key];
+jQuery(function($) {
+    // Auto-detect fields
+    $('#autoDetectBtn').on('click', function() {
+        $(this).prop('disabled', true).html('🔍 Detecting...');
+
+        $.ajax({
+            url: amrodSyncData.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'amrod_auto_detect_fields',
+                nonce: amrodSyncData.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    const fields = response.data.fields;
+                    const mapping = response.data.mapping;
+                    const sample = response.data.sample_product;
+                    showDetectionResultsField(fields, mapping, sample);
+                    populateMappingFields(mapping, sample);
                 } else {
-                    return '-';
+                    alert('❌ Failed to detect fields: ' + response.data);
+                }
+            },
+            error: function() {
+                alert('❌ Error connecting to server');
+            },
+            complete: function() {
+                $('#autoDetectBtn').prop('disabled', false).html('🔍 Auto-Detect Fields from Amrod');
+            }
+        });
+    });
+
+    // Test mapping
+    $('#testMappingBtn').on('click', function() {
+        const mapping = getFormMapping();
+
+        $.ajax({
+            url: amrodSyncData.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'amrod_test_field_mapping',
+                mapping: mapping,
+                nonce: amrodSyncData.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    showTestResult(response.data.preview);
+                } else {
+                    alert('❌ Failed to test mapping: ' + response.data);
+                }
+            },
+            error: function() {
+                alert('❌ Error connecting to server');
+            }
+        });
+    });
+
+    // Save mapping
+    $('#fieldMappingForm').on('submit', function(e) {
+        const mapping = getFormMapping();
+        
+        $.ajax({
+            url: amrodSyncData.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'amrod_save_field_mapping',
+                mapping: mapping,
+                nonce: amrodSyncData.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    alert('✅ Field mapping saved successfully!');
+                } else {
+                    alert('❌ Failed to save mapping');
+                }
+            },
+            error: function() {
+                alert('❌ Error connecting to server');
+            }
+        });
+
+        e.preventDefault();
+    });
+
+    function getFormMapping() {
+        const mapping = {};
+        $('input[name^="mapping["]').each(function() {
+            const name = $(this).attr('name');
+            const field = name.match(/mapping\[(\w+)\]/)[1];
+            const value = $(this).val();
+            if (value) {
+                mapping[field] = value;
+            }
+        });
+        return mapping;
+    }
+
+    function showDetectionResultsField(fields, mapping, sample) {
+        // Build field category breakdown
+        const categories = {
+            core: ['sku', 'name', 'price', 'sale_price', 'description', 'short_description', 'stock', 'image', 'images'],
+            categories: ['categories'],
+            attributes: ['brand', 'colour', 'size'],
+            marketing: ['clearance', 'deal_of_day', 'banner_image', 'catalog_pdf', 'special_message', 'sort_order']
+        };
+
+        const fieldLabels = {
+            sku: 'SKU',
+            name: 'Product Name',
+            price: 'Regular Price',
+            sale_price: 'Sale Price',
+            description: 'Description',
+            short_description: 'Short Description',
+            stock: 'Stock Quantity',
+            image: 'Main Image',
+            images: 'Image Gallery',
+            categories: 'Categories',
+            brand: 'Brand',
+            colour: 'Colour',
+            size: 'Size',
+            clearance: 'Clearance Flag',
+            deal_of_day: 'Deal of Day',
+            banner_image: 'Banner Image',
+            catalog_pdf: 'Catalog PDF',
+            special_message: 'Special Message',
+            sort_order: 'Sort Order'
+        };
+
+        let html = '<div class="alert alert-success"><strong>🔍 Detection Results</strong><br>';
+        html += '<small>Found ' + fields.length + ' fields in Amrod API</small><br><br>';
+
+        // Group detected fields by category
+        for (const [cat, fields_list] of Object.entries(categories)) {
+            const detected = fields_list.filter(f => mapping[f]).map(f => {
+                const value = sample && mapping[f] ? sample[mapping[f]] : '';
+                const displayValue = typeof value === 'object' ? JSON.stringify(value) : String(value).substring(0, 50);
+                return '<code>' + mapping[f] + '</code> → ' + fieldLabels[f] + (displayValue ? ' <small>("' + displayValue + '")</small>' : '');
+            });
+
+            if (detected.length > 0) {
+                const catIcons = { core: '📦', categories: '📂', attributes: '🏷️', marketing: '📣' };
+                const catLabels = { core: 'Core Fields', categories: 'Categories', attributes: 'Attributes', marketing: 'Marketing' };
+                html += '<strong>' + catIcons[cat] + ' ' + catLabels[cat] + ':</strong><br>';
+                html += detected.join('<br>') + '<br><br>';
+            }
+        }
+
+        html += '</div>';
+        
+        // Remove old results and add new
+        $('#mappingTable').prev('.alert-success').remove();
+        $('#mappingTable').before(html);
+    }
+
+    function populateMappingFields(mapping, sample) {
+        for (const [wcKey, amrodField] of Object.entries(mapping)) {
+            const $input = $('input[name="mapping[' + wcKey + ']"]');
+            if ($input.length) {
+                $input.val(amrodField);
+                
+                // Show sample value in the last column
+                const $row = $input.closest('tr');
+                if (sample && sample[amrodField] !== undefined) {
+                    let value = sample[amrodField];
+                    if (typeof value === 'object') {
+                        value = JSON.stringify(value);
+                    } else {
+                        value = String(value).substring(0, 80);
+                    }
+                    $row.find('td:last').html('<small class="text-success">' + value + '</small>');
                 }
             }
-            
-            if (Array.isArray(value)) {
-                return value.length > 0 ? (typeof value[0] === 'string' ? value[0] : JSON.stringify(value[0]).substring(0, 30)) : '-';
-            }
-            if (typeof value === 'object') {
-                return JSON.stringify(value).substring(0, 30) + '...';
-            }
-            return String(value).substring(0, 50);
-        },
-        
-        updateConfidence: function(e) {
-            const $row = $(e.currentTarget).closest('tr');
-            const wcKey = $row.data('wc-field');
-            const apiField = $(e.currentTarget).val();
-            
-            if (apiField) {
-                // Set to medium confidence for manual changes
-                $row.find('.badge').removeClass('bg-success bg-warning bg-danger bg-secondary')
-                    .addClass('bg-warning')
-                    .html('⚠️ Medium');
-                $row.find('.sample-value').text(FieldMapping.getSampleValue(FieldMapping.sampleData, apiField));
-            } else {
-                $row.find('.badge').removeClass('bg-success bg-warning bg-danger bg-secondary')
-                    .addClass('bg-secondary')
-                    .html('Not mapped');
-                $row.find('.sample-value').text('-');
-            }
-        },
-        
-        testMapping: function() {
-            const $btn = $('#testMappingBtn');
-            $btn.prop('disabled', true).html('⏳ Testing...');
-            
-            const data = {
-                action: 'woosync_test_mapping',
-                nonce: woosyncData.nonce
-            };
-            
-            $.post(woosyncData.ajaxUrl, data)
-                .done(function(response) {
-                    if (response.success) {
-                        FieldMapping.showTestResult(response.data);
-                    } else {
-                        alert('Test failed: ' + (response.data || 'Unknown error'));
-                    }
-                })
-                .fail(function() {
-                    alert('Test failed: Network error');
-                })
-                .always(function() {
-                    $btn.prop('disabled', false).html('🧪 Test Mapping');
-                });
-        },
-        
-        showTestResult: function(data) {
-            const $result = $('#mappingTestResult');
-            const $data = $('#testProductData');
-            
-            const formatted = JSON.stringify(data, null, 2);
-            $data.text(formatted);
-            $result.show();
-        },
-        
-        resetMapping: function() {
-            if (!confirm('Reset all field mappings to vendor template defaults?')) {
-                return;
-            }
-            
-            const templates = window.woosyncVendorTemplates || {};
-            const activeVendor = window.woosyncActiveVendor || 'amrod';
-            const template = templates[activeVendor] || templates.amrod;
-            
-            if (template && template.field_mapping_template) {
-                $('#mappingTable tbody tr').each(function() {
-                    const $row = $(this);
-                    const wcKey = $row.data('wc-field');
-                    const defaultMapping = template.field_mapping_template[wcKey];
-                    
-                    if (defaultMapping) {
-                        $row.find('.api-field-input').val(defaultMapping);
-                        $row.find('.badge').removeClass('bg-success bg-warning bg-danger bg-secondary')
-                            .addClass('bg-success')
-                            .html('✅ High');
-                    } else {
-                        $row.find('.api-field-input').val('');
-                        $row.find('.badge').removeClass('bg-success bg-warning bg-danger bg-secondary')
-                            .addClass('bg-secondary')
-                            .html('Not mapped');
-                    }
-                });
-                
-                FieldMapping.showMessage('Mappings reset to template defaults.', 'info');
-            }
-        },
-        
-        showMessage: function(message, type) {
-            const alertClass = {
-                success: 'alert-success',
-                error: 'alert-danger',
-                warning: 'alert-warning',
-                info: 'alert-info'
-            }[type] || 'alert-info';
-            
-            const $alert = $('<div class="alert ' + alertClass + ' alert-dismissible fade show">')
-                .html('<strong>' + message + '</strong>')
-                .append('<button type="button" class="btn-close" data-bs-dismiss="alert"></button>');
-            
-            $('#fieldMappingForm').prepend($alert);
-            
-            setTimeout(function() {
-                $alert.alert('close');
-            }, 5000);
         }
-    };
-    
-    // Initialize when document is ready
-    $(document).ready(function() {
-        if ($('#mappingTable').length) {
-            FieldMapping.init();
+    }
+
+    function showTestResult(preview) {
+        let html = '<ul>';
+        for (const key in preview) {
+            html += '<li><strong>' + key + ':</strong> ' + preview[key] + '</li>';
         }
-    });
-    
-})(jQuery);
+        html += '</ul>';
+
+        $('#testProductData').html(html);
+        $('#mappingTestResult').show();
+    }
+});
