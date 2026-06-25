@@ -134,6 +134,7 @@ function woosync_enqueue_assets($hook) {
     wp_enqueue_script('woosync-mapping-js', WOOSYNC_ASSETS . 'js/field-mapping.js', ['jquery'], WOOSYNC_VERSION, true);
     wp_enqueue_script('woosync-wizard-js', WOOSYNC_ASSETS . 'js/wizard.js', ['jquery'], WOOSYNC_VERSION, true);
     wp_enqueue_script('woosync-promotions-js', WOOSYNC_ASSETS . 'js/promotions.js', ['jquery', 'jquery-ui-datepicker'], WOOSYNC_VERSION, true);
+    wp_enqueue_script('woosync-optimizer-js', WOOSYNC_ASSETS . 'js/optimizer.js', ['jquery'], WOOSYNC_VERSION, true);
 
     // Localize data for JS
     wp_localize_script('woosync-promotions-js', 'woosyncPromotions', [
@@ -746,6 +747,11 @@ function woosync_render_main_page() {
                 </a>
             </li>
             <li class="nav-item">
+                <a class="nav-link <?php echo $active_tab === 'optimizer' ? 'active' : ''; ?>" href="?page=woosync&tab=optimizer">
+                    🚀 Product Optimizer
+                </a>
+            </li>
+            <li class="nav-item">
                 <a class="nav-link <?php echo $active_tab === 'settings' ? 'active' : ''; ?>" href="?page=woosync&tab=settings">
                     ⚙️ Settings
                 </a>
@@ -766,6 +772,7 @@ function woosync_render_main_page() {
             elseif ($active_tab === 'mapping' && $active_vendor) woosync_tab_field_mapping();
             elseif ($active_tab === 'settings' && $active_vendor) woosync_tab_settings();
             elseif ($active_tab === 'updates') woosync_tab_updates();
+            elseif ($active_tab === 'optimizer' && $active_vendor) woosync_tab_optimizer();
             else woosync_tab_dashboard();
             ?>
         </div>
@@ -3069,6 +3076,468 @@ function woosync_ajax_record_notification_click() {
 }
 
 add_action('wp_ajax_woosync_test_connection', 'woosync_ajax_test_connection');
+// ===== PRODUCT OPTIMIZER AJAX HANDLERS =====
+add_action('wp_ajax_woosync_scan_products', 'woosync_ajax_scan_products');
+function woosync_ajax_scan_products() {
+    check_ajax_referer('woosync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $products = wc_get_products([
+        'limit' => -1,
+        'status' => ['publish', 'private'],
+        'return' => 'objects'
+    ]);
+    
+    $results = [];
+    $needs_attention = 0;
+    $shopping_ready = 0;
+    $total_score = 0;
+    
+    foreach ($products as $product) {
+        $score = woosync_calculate_product_score($product);
+        $checks = woosync_check_product_seo($product);
+        
+        $results[] = [
+            'id' => $product->get_id(),
+            'name' => $product->get_name(),
+            'sku' => $product->get_sku(),
+            'score' => $score,
+            'checks' => $checks,
+            'title_length' => strlen($product->get_name()),
+            'description_length' => strlen(wp_strip_all_tags($product->get_description())),
+            'image_size' => woosync_get_image_size_info($product),
+            'alt_text' => woosync_get_product_image_alt($product),
+            'price' => $product->get_price() ? 'R' . $product->get_price() : 'Not set',
+            'brand' => woosync_get_product_brand($product),
+            'taxonomy' => woosync_get_google_taxonomy($product),
+            'has_schema' => woosync_product_has_schema($product),
+            'category' => woosync_get_product_primary_category($product)
+        ];
+        
+        $total_score += $score;
+        if ($score < 70) $needs_attention++;
+        if ($checks['title'] && $checks['description'] && $checks['image'] && $checks['price']) $shopping_ready++;
+    }
+    
+    $count = count($results);
+    $overall_score = $count > 0 ? round($total_score / $count) : 0;
+    
+    wp_send_json_success([
+        'products' => $results,
+        'total_products' => $count,
+        'overall_score' => $overall_score,
+        'needs_attention' => $needs_attention,
+        'shopping_ready' => $shopping_ready
+    ]);
+}
+
+function woosync_calculate_product_score($product) {
+    $checks = woosync_check_product_seo($product);
+    $score = 0;
+    
+    // Title (15 points)
+    if ($checks['title']) {
+        $title_len = strlen($product->get_name());
+        if ($title_len >= 30 && $title_len <= 150) $score += 15;
+        elseif ($title_len >= 10) $score += 10;
+        else $score += 5;
+    }
+    
+    // Description (15 points)
+    if ($checks['description']) {
+        $desc_len = strlen(wp_strip_all_tags($product->get_description()));
+        if ($desc_len >= 100) $score += 15;
+        elseif ($desc_len >= 50) $score += 10;
+        else $score += 5;
+    }
+    
+    // Image (15 points)
+    if ($checks['image']) $score += 15;
+    
+    // Alt text (10 points)
+    if ($checks['alt_text']) $score += 10;
+    
+    // Price (10 points)
+    if ($checks['price']) $score += 10;
+    
+    // Brand (10 points)
+    if ($checks['brand']) $score += 10;
+    
+    // Taxonomy (10 points)
+    if ($checks['taxonomy']) $score += 10;
+    
+    // Schema (5 points)
+    if ($checks['schema']) $score += 5;
+    
+    return $score;
+}
+
+function woosync_check_product_seo($product) {
+    return [
+        'title' => strlen($product->get_name()) >= 10,
+        'description' => strlen(wp_strip_all_tags($product->get_description())) >= 20,
+        'image' => $product->get_image_id() > 0,
+        'alt_text' => !empty(woosync_get_product_image_alt($product)),
+        'price' => $product->get_price() !== '',
+        'brand' => !empty(woosync_get_product_brand($product)),
+        'taxonomy' => !empty(woosync_get_google_taxonomy($product)),
+        'schema' => woosync_product_has_schema($product)
+    ];
+}
+
+function woosync_get_image_size_info($product) {
+    $image_id = $product->get_image_id();
+    if (!$image_id) return 'No image';
+    
+    $file = get_attached_file($image_id);
+    if ($file && file_exists($file)) {
+        $size = filesize($file);
+        if ($size > 1024 * 1024) return round($size / (1024 * 1024), 1) . ' MB';
+        return round($size / 1024) . ' KB';
+    }
+    return 'Unknown size';
+}
+
+function woosync_get_product_image_alt($product) {
+    $image_id = $product->get_image_id();
+    if (!$image_id) return '';
+    return get_post_meta($image_id, '_wp_attachment_image_alt', true);
+}
+
+function woosync_get_product_brand($product) {
+    $brand = $product->get_attribute('brand');
+    if ($brand) return $brand;
+    
+    $brands = wp_get_post_terms($product->get_id(), 'product_brand');
+    if (!empty($brands)) return $brands[0]->name;
+    
+    return '';
+}
+
+function woosync_get_google_taxonomy($product) {
+    return $product->get_meta('_google_product_category');
+}
+
+function woosync_product_has_schema($product) {
+    return !empty($product->get_meta('_woosync_schema_markup'));
+}
+
+function woosync_get_product_primary_category($product) {
+    $terms = wp_get_post_terms($product->get_id(), 'product_cat');
+    if (!empty($terms)) return $terms[0]->name;
+    return 'Uncategorized';
+}
+
+// Quick fix AJAX handler
+add_action('wp_ajax_woosync_apply_quick_fix', 'woosync_ajax_apply_quick_fix');
+function woosync_ajax_apply_quick_fix() {
+    check_ajax_referer('woosync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $product_id = intval($_POST['product_id']);
+    $fix_type = sanitize_text_field($_POST['fix_type']);
+    
+    $product = wc_get_product($product_id);
+    if (!$product) {
+        wp_send_json_error('Product not found');
+    }
+    
+    $vendor = woosync_get_active_vendor();
+    
+    switch ($fix_type) {
+        case 'optimize_title':
+            $title = $product->get_name();
+            if (strlen($title) > 150) {
+                $product->set_name(substr($title, 0, 147) . '...');
+                $product->save();
+            }
+            break;
+            
+        case 'generate_description':
+            $description = woosync_generate_product_description($product, $vendor);
+            if ($description) {
+                $product->set_description($description);
+                $product->save();
+            }
+            break;
+            
+        case 'add_alt_text':
+            $alt = woosync_generate_alt_text($product);
+            $image_id = $product->get_image_id();
+            if ($image_id && $alt) {
+                update_post_meta($image_id, '_wp_attachment_image_alt', $alt);
+            }
+            break;
+            
+        case 'set_brand':
+            $brand = woosync_get_vendor_brand_for_product($product, $vendor);
+            if ($brand) {
+                woosync_set_product_attribute($product, 'brand', $brand);
+                $product->save();
+            }
+            break;
+            
+        case 'map_taxonomy':
+            $taxonomy = woosync_suggest_google_taxonomy($product);
+            if ($taxonomy) {
+                $product->update_meta_data('_google_product_category', $taxonomy);
+                $product->save();
+            }
+            break;
+    }
+    
+    $new_score = woosync_calculate_product_score($product);
+    
+    wp_send_json_success([
+        'message' => 'Quick fix applied',
+        'new_score' => $new_score
+    ]);
+}
+
+function woosync_generate_product_description($product, $vendor) {
+    $name = $product->get_name();
+    $sku = $product->get_sku();
+    $price = $product->get_price();
+    
+    $description = '<p><strong>' . esc_html($name) . '</strong>';
+    if ($sku) $description .= ' (SKU: ' . esc_html($sku) . ')';
+    $description .= '</p>';
+    $description .= '<p>Premium quality product available at ';
+    if ($price) $description .= 'R' . number_format(floatval($price), 2);
+    $description .= '. Order now for fast delivery.</p>';
+    $description .= '<p>Features include high-quality materials and excellent craftsmanship.</p>';
+    
+    return $description;
+}
+
+function woosync_generate_alt_text($product) {
+    $name = $product->get_name();
+    $sku = $product->get_sku();
+    return $name . ' - Product Image' . ($sku ? ' | SKU: ' . $sku : '');
+}
+
+function woosync_get_vendor_brand_for_product($product, $vendor) {
+    $source_product_code = $product->get_meta('_source_product_code');
+    if ($source_product_code && $vendor) {
+        // Could fetch from API if needed
+    }
+    
+    return 'Generic Brand';
+}
+
+function woosync_suggest_google_taxonomy($product) {
+    $categories = wp_get_post_terms($product->get_id(), 'product_cat');
+    
+    $taxonomy_map = [
+        'clothing' => 1663,
+        'shirt' => 1663,
+        't-shirt' => 1663,
+        'pants' => 207,
+        'shoes' => 187,
+        'footwear' => 187,
+        'electronics' => 267,
+        'accessories' => 1664,
+        'gift' => 611,
+        'home' => 20624,
+        'kitchen' => 6918,
+        'sports' => 248,
+        'toys' => 4726
+    ];
+    
+    foreach ($categories as $cat) {
+        $cat_name = strtolower($cat->name);
+        foreach ($taxonomy_map as $keyword => $tax_id) {
+            if (strpos($cat_name, $keyword) !== false) {
+                return $tax_id;
+            }
+        }
+    }
+    
+    return 1663;
+}
+
+// Batch action AJAX handler
+add_action('wp_ajax_woosync_batch_action', 'woosync_ajax_batch_action');
+function woosync_ajax_batch_action() {
+    check_ajax_referer('woosync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $product_ids = isset($_POST['product_ids']) ? array_map('intval', $_POST['product_ids']) : [];
+    $batch_action = sanitize_text_field($_POST['batch_action']);
+    $fix_types = isset($_POST['fix_types']) ? $_POST['fix_types'] : [];
+    
+    if (empty($product_ids)) {
+        $products = wc_get_products([
+            'limit' => -1,
+            'status' => ['publish', 'private']
+        ]);
+        $product_ids = array_map(function($p) { return $p->get_id(); }, $products);
+    }
+    
+    $updated = 0;
+    $vendor = woosync_get_active_vendor();
+    
+    foreach ($product_ids as $product_id) {
+        $product = wc_get_product($product_id);
+        if (!$product) continue;
+        
+        switch ($batch_action) {
+            case 'batch_generate_descriptions':
+                $desc = woosync_generate_product_description($product, $vendor);
+                if ($desc) {
+                    $product->set_description($desc);
+                    $product->save();
+                    $updated++;
+                }
+                break;
+                
+            case 'batch_optimize_titles':
+                $title = $product->get_name();
+                if (strlen($title) > 150) {
+                    $product->set_name(substr($title, 0, 147) . '...');
+                    $product->save();
+                    $updated++;
+                }
+                break;
+                
+            case 'batch_add_alt_text':
+                $alt = woosync_generate_alt_text($product);
+                $image_id = $product->get_image_id();
+                if ($image_id && $alt && !get_post_meta($image_id, '_wp_attachment_image_alt', true)) {
+                    update_post_meta($image_id, '_wp_attachment_image_alt', $alt);
+                    $updated++;
+                }
+                break;
+                
+            case 'batch_set_brands':
+                $brand = woosync_get_vendor_brand_for_product($product, $vendor);
+                if ($brand && !$product->get_attribute('brand')) {
+                    woosync_set_product_attribute($product, 'brand', $brand);
+                    $product->save();
+                    $updated++;
+                }
+                break;
+                
+            case 'batch_map_taxonomy':
+                $taxonomy = woosync_suggest_google_taxonomy($product);
+                if ($taxonomy && !$product->get_meta('_google_product_category')) {
+                    $product->update_meta_data('_google_product_category', $taxonomy);
+                    $product->save();
+                    $updated++;
+                }
+                break;
+                
+            case 'batch_apply_fixes':
+                foreach ($fix_types as $fix_type) {
+                    $_POST['product_id'] = $product_id;
+                    $_POST['fix_type'] = $fix_type;
+                    ob_start();
+                    woosync_ajax_apply_quick_fix();
+                    ob_end_clean();
+                    $updated++;
+                }
+                break;
+        }
+    }
+    
+    wp_send_json_success([
+        'message' => 'Batch action completed',
+        'updated' => $updated
+    ]);
+}
+
+// Schema generator AJAX handler
+add_action('wp_ajax_woosync_generate_schema', 'woosync_ajax_generate_schema');
+function woosync_ajax_generate_schema() {
+    check_ajax_referer('woosync_nonce');
+    if (!current_user_can('manage_options')) wp_die('Unauthorized');
+    
+    $product_id = intval($_POST['product_id']);
+    $product = wc_get_product($product_id);
+    
+    if (!$product) {
+        wp_send_json_error('Product not found');
+    }
+    
+    $schema = woosync_generate_product_schema($product);
+    
+    $product->update_meta_data('_woosync_schema_markup', $schema);
+    $product->save();
+    
+    wp_send_json_success([
+        'product_name' => $product->get_name(),
+        'schema' => $schema
+    ]);
+}
+
+function woosync_generate_product_schema($product) {
+    $price = $product->get_price();
+    $price_val = $price ? floatval($price) : 0;
+    $currency = get_woocommerce_currency();
+    
+    $availability = 'OutOfStock';
+    if ($product->is_in_stock()) {
+        $availability = $product->get_stock_status() === 'onbackorder' ? 'PreOrder' : 'InStock';
+    }
+    
+    $schema = [
+        '@context' => 'https://schema.org',
+        '@type' => 'Product',
+        'name' => $product->get_name(),
+        'sku' => $product->get_sku(),
+        'description' => wp_strip_all_tags($product->get_description()),
+        'image' => [],
+        'offers' => [
+            '@type' => 'Offer',
+            'priceCurrency' => $currency,
+            'price' => number_format($price_val, 2, '.', ''),
+            'availability' => 'https://schema.org/' . $availability,
+            'seller' => [
+                '@type' => 'Organization',
+                'name' => get_bloginfo('name')
+            ]
+        ]
+    ];
+    
+    $image_id = $product->get_image_id();
+    if ($image_id) {
+        $image_url = wp_get_attachment_url($image_id);
+        if ($image_url) {
+            $schema['image'] = $image_url;
+        }
+    }
+    
+    $brand = woosync_get_product_brand($product);
+    if ($brand) {
+        $schema['brand'] = [
+            '@type' => 'Brand',
+            'name' => $brand
+        ];
+    }
+    
+    $gtin = $product->get_meta('_gtin');
+    if ($gtin) {
+        $schema['gtin'] = $gtin;
+    }
+    
+    $mpn = $product->get_meta('_mpn');
+    if ($mpn) {
+        $schema['mpn'] = $mpn;
+    }
+    
+    $rating = $product->get_average_rating();
+    if ($rating > 0) {
+        $review_count = $product->get_review_count();
+        $schema['aggregateRating'] = [
+            '@type' => 'AggregateRating',
+            'ratingValue' => number_format($rating, 1),
+            'reviewCount' => $review_count
+        ];
+    }
+    
+    return $schema;
+}
+
 function woosync_ajax_test_connection() {
     check_ajax_referer('woosync_nonce');
     if (!current_user_can('manage_options')) wp_die('Unauthorized');
@@ -3104,7 +3573,7 @@ add_action('admin_init', function() {
 });
 
 // ===== UNINSTALL =====
-register_uninstall_hook(__FILE__, function() {
+function woosync_uninstall() {
     $options = [
         'woosync_vendors', 'woosync_active_vendor', 'woosync_batch_size', 
         'woosync_sync_schedule', 'woosync_log_retain_days', 'woosync_wizard_completed',
@@ -3116,20 +3585,25 @@ register_uninstall_hook(__FILE__, function() {
     
     // Clear transients
     delete_transient('woosync_activated');
-    delete_transient('woosync_token_*');
     delete_transient('woosync_update_check');
     delete_transient('woosync_update_available');
     delete_transient('woosync_update_dismissed');
     
     // Clear scheduled update check
-    WooSync_Updater::clear_scheduled_check();
-});
+    if (class_exists('WooSync_Updater')) {
+        WooSync_Updater::clear_scheduled_check();
+    }
+}
+register_uninstall_hook(__FILE__, 'woosync_uninstall');
 
 
 // ===== DEACTIVATION =====
-register_deactivation_hook(__FILE__, function() {
-    WooSync_Updater::clear_scheduled_check();
-});
+function woosync_deactivate() {
+    if (class_exists('WooSync_Updater')) {
+        WooSync_Updater::clear_scheduled_check();
+    }
+}
+register_deactivation_hook(__FILE__, 'woosync_deactivate');
 
 
 // ===== UPDATES TAB =====
@@ -3308,6 +3782,380 @@ function woosync_tab_updates() {
                     alert("Error checking for updates");
                     $btn.prop("disabled", false).text("🔄 Check for Updates");
                 }
+            });
+        });
+    });
+    </script>
+    <?php
+}
+
+
+
+// ===== PRODUCT OPTIMIZER TAB =====
+function woosync_tab_optimizer() {
+    $products = wc_get_products([
+        'limit' => 1,
+        'status' => ['publish', 'private']
+    ]);
+    $total_products = wp_count_posts('product');
+    $total_count = $total_products ? $total_products->publish + $total_products->hold : 0;
+    ?>
+    
+    <div id="productOptimizerTab" class="woosync-optimizer-container">
+        <!-- Header -->
+        <div class="woosync-brand-header">
+            <div>
+                <h1>🚀 Product Optimizer</h1>
+                <p class="text-muted mb-0">Optimize your products for Google Shopping, Facebook/Meta Shop, and general SEO</p>
+            </div>
+            <div class="text-end">
+                <button type="button" class="btn btn-primary" id="runProductScan">
+                    🔍 Run Full Scan
+                </button>
+            </div>
+        </div>
+        
+        <!-- Alerts Container -->
+        <div id="optimizerAlerts"></div>
+        
+        <!-- Quick Stats -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="woosync-score-card">
+                    <div class="score-value text-success" id="avgQualityScore">0%</div>
+                    <div class="score-label">Average Quality Score</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="woosync-score-card">
+                    <div class="score-value" id="productsScanned">0</div>
+                    <div class="score-label">Products Scanned</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="woosync-score-card">
+                    <div class="score-value text-warning" id="productsNeedingAttention">0</div>
+                    <div class="score-label">Needing Attention</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="woosync-score-card">
+                    <div class="score-value text-success" id="productsReadyForShopping">0</div>
+                    <div class="score-label">Shopping Ready</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Score Summary (Hidden by default) -->
+        <div id="scoreSummary" style="display: none;">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">📊 Quality Score by Category</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row" id="categoryBreakdown"></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Batch Actions -->
+        <div class="woosync-batch-actions">
+            <h5>⚡ Quick Batch Actions</h5>
+            <p class="text-muted small mb-3">Apply fixes to selected products or all products</p>
+            
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <button type="button" class="batch-action-btn w-100" id="batchGenerateDescriptions" data-action="batch_generate_descriptions">
+                        ✨ Generate Descriptions
+                    </button>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <button type="button" class="batch-action-btn w-100" id="batchOptimizeTitles" data-action="batch_optimize_titles">
+                        ✂️ Optimize Titles (150 char max)
+                    </button>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <button type="button" class="batch-action-btn w-100" id="batchAddAltText" data-action="batch_add_alt_text">
+                        🏷️ Add Alt Text to Images
+                    </button>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <button type="button" class="batch-action-btn w-100" id="batchSetBrands" data-action="batch_set_brands">
+                        🏷️ Set Brand Attribute
+                    </button>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <button type="button" class="batch-action-btn w-100" id="batchMapTaxonomy" data-action="batch_map_taxonomy">
+                        📁 Map Google Taxonomy
+                    </button>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <button type="button" class="woosync-export-btn" id="exportQualityReport">
+                        📥 Export CSV Report
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Scan Results Table -->
+        <div class="card" id="scanResultsTable" style="display: none;">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">📋 Scan Results</h5>
+                <div>
+                    <label class="me-2">
+                        <input type="checkbox" id="selectAllProducts"> Select All
+                    </label>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th style="width: 40px;"></th>
+                                <th>Product</th>
+                                <th style="width: 80px;">Score</th>
+                                <th style="width: 300px;">Checks</th>
+                                <th style="width: 100px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="scanResultsBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Plugin Recommendations -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0">🔌 Recommended Plugins</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <div class="woosync-plugin-card">
+                            <div class="plugin-icon">📊</div>
+                            <h6>Yoast SEO <span class="woosync-suggested-badge">⭐ Suggested by WooSync</span></h6>
+                            <p>Complete SEO solution with schema markup, meta tags, and content analysis for WooCommerce products.</p>
+                            <a href="https://wordpress.org/plugins/wordpress-seo/" target="_blank" class="plugin-link">
+                                View on WordPress.org →
+                            </a>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="woosync-plugin-card">
+                            <div class="plugin-icon">🛒</div>
+                            <h6>WooCommerce Google Product Feed <span class="woosync-suggested-badge">⭐ Suggested by WooSync</span></h6>
+                            <p>Generate and submit product feeds to Google Merchant Center for Shopping ads.</p>
+                            <a href="https://wordpress.org/plugins/woo-gutenberg-products-feed/" target="_blank" class="plugin-link">
+                                View on WordPress.org →
+                            </a>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="woosync-plugin-card">
+                            <div class="plugin-icon">📘</div>
+                            <h6>Facebook for WooCommerce <span class="woosync-suggested-badge">⭐ Suggested by WooSync</span></h6>
+                            <p>Sync your WooCommerce products with Facebook Catalog for dynamic ads and Shop.</p>
+                            <a href="https://wordpress.org/plugins/facebook-for-woocommerce/" target="_blank" class="plugin-link">
+                                View on WordPress.org →
+                            </a>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="woosync-plugin-card">
+                            <div class="plugin-icon">⭐</div>
+                            <h6>Social Rocket <span class="woosync-suggested-badge">⭐ Suggested by WooSync</span></h6>
+                            <p>Collect and display reviews with social proof to boost conversions and trust.</p>
+                            <a href="https://wordpress.org/plugins/social-rocket/" target="_blank" class="plugin-link">
+                                View on WordPress.org →
+                            </a>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="woosync-plugin-card">
+                            <div class="plugin-icon">📸</div>
+                            <h6>Instagram Shopping <span class="woosync-suggested-badge">⭐ Suggested by WooSync</span></h6>
+                            <p>Tag products in Instagram posts and stories for seamless shopping experience.</p>
+                            <a href="https://help.instagram.com/288026558325244" target="_blank" class="plugin-link">
+                                Instagram Guide →
+                            </a>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="woosync-plugin-card">
+                            <div class="plugin-icon">🔍</div>
+                            <h6>Rank Math SEO <span class="woosync-suggested-badge">⭐ Suggested by WooSync</span></h6>
+                            <p>Modern SEO plugin with AI-powered content optimization and advanced schema.</p>
+                            <a href="https://wordpress.org/plugins/seo-by-rank-math/" target="_blank" class="plugin-link">
+                                View on WordPress.org →
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Tutorial Links -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0">📚 Setup Tutorials</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <a href="https://support.google.com/merchants/answer/6364310" target="_blank" class="woosync-tutorial-card text-decoration-none">
+                            <div class="tutorial-icon google">🔵</div>
+                            <div class="tutorial-content">
+                                <div class="tutorial-title">Google Merchant Center Setup Guide</div>
+                                <div class="tutorial-platform">Google • Official Documentation</div>
+                            </div>
+                        </a>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <a href="https://woocommerce.com/documentation/posts/google-product-feed/" target="_blank" class="woosync-tutorial-card text-decoration-none">
+                            <div class="tutorial-icon google">🛒</div>
+                            <div class="tutorial-content">
+                                <div class="tutorial-title">WooCommerce Google Shopping Feed Setup</div>
+                                <div class="tutorial-platform">Google • WooCommerce Guide</div>
+                            </div>
+                        </a>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <a href="https://www.facebook.com/business/news/setting-up-facebook-shop" target="_blank" class="woosync-tutorial-card text-decoration-none">
+                            <div class="tutorial-icon facebook">📘</div>
+                            <div class="tutorial-content">
+                                <div class="tutorial-title">Facebook Shop Setup Guide</div>
+                                <div class="tutorial-platform">Facebook • Meta Commerce</div>
+                            </div>
+                        </a>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <a href="https://help.instagram.com/402025958105621" target="_blank" class="woosync-tutorial-card text-decoration-none">
+                            <div class="tutorial-icon instagram">📸</div>
+                            <div class="tutorial-content">
+                                <div class="tutorial-title">Instagram Shopping Setup</div>
+                                <div class="tutorial-platform">Instagram • Meta Commerce</div>
+                            </div>
+                        </a>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <a href="https://yoast.com/woocommerce-seo/" target="_blank" class="woosync-tutorial-card text-decoration-none">
+                            <div class="tutorial-icon youtube">📹</div>
+                            <div class="tutorial-content">
+                                <div class="tutorial-title">Yoast SEO for WooCommerce Tutorial</div>
+                                <div class="tutorial-platform">Yoast • Official Guide</div>
+                            </div>
+                        </a>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <a href="https://www.youtube.com/results?search_query=woocommerce+google+shopping+feed+setup" target="_blank" class="woosync-tutorial-card text-decoration-none">
+                            <div class="tutorial-icon youtube">▶️</div>
+                            <div class="tutorial-content">
+                                <div class="tutorial-title">Video: WooCommerce Google Feed Setup</div>
+                                <div class="tutorial-platform">YouTube • Video Tutorials</div>
+                            </div>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- External Resources -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0">🔗 External Resources</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3 mb-3">
+                        <a href="https://merchants.google.com" target="_blank" class="woosync-resource-link">
+                            <span class="resource-icon">🔵</span>
+                            <span>Google Merchant Center</span>
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <a href="https://www.facebook.com/commerce" target="_blank" class="woosync-resource-link">
+                            <span class="resource-icon">📘</span>
+                            <span>Facebook Commerce Manager</span>
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <a href="https://www.google.com/basepages/producttype/taxonomy with GTIN" target="_blank" class="woosync-resource-link">
+                            <span class="resource-icon">📁</span>
+                            <span>Google Product Taxonomy ID Lookup</span>
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <a href="https://schema.org/Product" target="_blank" class="woosync-resource-link">
+                            <span class="resource-icon">📋</span>
+                            <span>Schema.org Product Documentation</span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Product Details Modal -->
+    <div class="modal fade" id="productDetailsModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Product Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <div>
+                            <h4 id="detailProductName">Product Name</h4>
+                            <small class="text-muted" id="detailProductSku">SKU: ---</small>
+                        </div>
+                        <div class="text-end">
+                            <div class="h2 mb-0" id="detailScore">0%</div>
+                            <small class="text-muted">Quality Score</small>
+                        </div>
+                    </div>
+                    
+                    <h6>SEO Checks</h6>
+                    <div id="productCheckDetails"></div>
+                    
+                    <h6 class="mt-4">Quick Fixes</h6>
+                    <div id="productQuickFixes"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Schema Modal -->
+    <div class="modal fade" id="schemaModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">📋 JSON-LD Product Schema</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p><strong>Product:</strong> <span id="schemaProductName"></span></p>
+                    <p class="text-muted small">This schema has been saved to the product meta. Add this to your theme or use an SEO plugin to output it.</p>
+                    <pre class="woosync-schema-output" id="schemaOutput"></pre>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="copySchemaBtn">📋 Copy to Clipboard</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    jQuery(document).ready(function($) {
+        // Copy schema button
+        $('#copySchemaBtn').on('click', function() {
+            var schema = $('#schemaOutput').text();
+            navigator.clipboard.writeText(schema).then(function() {
+                alert('Schema copied to clipboard!');
             });
         });
     });
