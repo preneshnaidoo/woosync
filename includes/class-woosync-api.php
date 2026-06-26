@@ -35,11 +35,13 @@ function woosync_mask_token_for_display( $token ) {
  * @param string $message
  * @return void
  */
-function woosync_sync_log( $message ) {
-    $log = (array) get_option( 'woosync_sync_log', array() );
-    $log[] = '[' . current_time( 'mysql' ) . '] ' . $message;
-    $log = array_slice( $log, -500 );
-    update_option( 'woosync_sync_log', $log );
+if ( ! function_exists( 'woosync_sync_log' ) ) {
+    function woosync_sync_log( $message ) {
+        $log = (array) get_option( 'woosync_sync_log', array() );
+        $log[] = '[' . current_time( 'mysql' ) . '] ' . $message;
+        $log = array_slice( $log, -500 );
+        update_option( 'woosync_sync_log', $log );
+    }
 }
 
 // ============================================================================
