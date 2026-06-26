@@ -48,6 +48,33 @@ define( 'WOOSYNC_URL', plugin_dir_url( __FILE__ ) );
 define( 'WOOSYNC_ASSETS', WOOSYNC_URL . 'assets/' );
 
 // ============================================================================
+// STANDALONE UTILITY FUNCTIONS (always available, even before includes load)
+// ============================================================================
+
+/**
+ * Write a message to the WooSync sync log.
+ * Standalone version used by activation/deactivation hooks before includes load.
+ *
+ * @since 1.0.0
+ * @param string $message
+ */
+if ( ! function_exists( 'woosync_sync_log' ) ) {
+    function woosync_sync_log( $message ) {
+        $log = (array) get_option( 'woosync_sync_log', array() );
+        $log[] = array(
+            'time' => current_time( 'mysql' ),
+            'message' => $message,
+        );
+        if ( count( $log ) > 500 ) {
+            $log = array_slice( $log, -500 );
+        }
+        update_option( 'woosync_sync_log', $log );
+    }
+}
+
+
+
+// ============================================================================
 // WOOCOMMERCE DEPENDENCY CHECK
 // ============================================================================
 
